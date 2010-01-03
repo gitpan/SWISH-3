@@ -84,19 +84,24 @@ version(self)
         RETVAL   
 
 SV*
-slurp(self, filename)
+slurp(self, filename, ...)
     swish_3*    self;
     char*       filename;
     
     PREINIT:
         xmlChar* buf;
         struct stat info;
+        boolean binmode;
     
     CODE:
+        binmode = SWISH_FALSE;
+        if ( items > 2 ) {
+            binmode = SvIV(ST(2));
+        }
         if (stat((char *)filename, &info)) {
             croak("Can't stat %s: %s\n", filename, strerror(errno));
         }
-        buf     = swish_io_slurp_file_len((xmlChar*)filename, info.st_size);
+        buf     = swish_io_slurp_file_len((xmlChar*)filename, info.st_size, binmode);
         RETVAL  = newSV(0);
         sv_usepvn_mg(RETVAL, (char*)buf, info.st_size);
         swish_memcount_dec(); // must do manually since Perl will free() it.
@@ -340,12 +345,12 @@ DESTROY(self)
         s3 = (swish_3*)sp_extract_ptr(self);
         s3->ref_cnt--;
 
-        if (SWISH_DEBUG & SWISH_DEBUG_MEMORY) {
-            warn("DESTROYing swish_3 object %s  [0x%lx] [ref_cnt = %d]", 
+        if (SWISH_DEBUG) {
+            warn("DESTROY %s [0x%lx] [ref_cnt = %d]", 
                 SvPV(ST(0), PL_na), (IV)s3, s3->ref_cnt);
         }
 
-        if ( SWISH_DEBUG & SWISH_DEBUG_MEMORY ) {
+        if (SWISH_DEBUG) {
           warn("s3->ref_cnt == %d\n", s3->ref_cnt);
           warn("s3->config->ref_cnt == %d\n", s3->config->ref_cnt);
           warn("s3->analyzer->ref_cnt == %d\n", s3->analyzer->ref_cnt);
