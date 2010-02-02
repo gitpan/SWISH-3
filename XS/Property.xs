@@ -73,13 +73,28 @@ sort (self)
         
     OUTPUT:
         RETVAL
-        
+       
+SV*
+presort (self)
+    swish_Property *self;
+
+    CODE:
+        RETVAL = newSViv( self->presort );
+
+    OUTPUT:
+        RETVAL
+ 
 SV*
 alias_for (self)
     swish_Property *self;
     
     CODE:
-        RETVAL = newSVpvn( (char*)self->alias_for, strlen((char*)self->alias_for) );
+        if (self->alias_for == NULL) {
+            RETVAL = &PL_sv_undef;
+        }
+        else {
+            RETVAL = newSVpvn( (char*)self->alias_for, strlen((char*)self->alias_for) );
+        }
 
     OUTPUT:
         RETVAL

@@ -4,7 +4,7 @@ use 5.008_003;
 
 package SWISH::3;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 # set by libswish3 in swish.c but that happens after %ENV has been
 # initialized at Perl compile time.
@@ -19,6 +19,34 @@ use base qw( Exporter );
 use constant SWISH_DOC_FIELDS =>
     qw( mtime size encoding mime uri nwords ext parser );
 use constant SWISH_TOKEN_FIELDS => qw( pos meta value context len );
+
+# these numbers are assigned via enum in libswish3.h
+# and so are too tedious to parse via Makefile.PL
+# since they are typically only added-to, not a big deal
+# to maintain manually here.
+# we can't just assign to the constant value since the
+# constants are not loaded until run time above via XSLoader.
+use constant SWISH_DOC_FIELDS_MAP => {
+    encoding => 10,
+    mime     => 8,
+    mtime    => 5,
+    nwords   => 7,
+    parser   => 9,
+    size     => 4,
+    title    => 3,
+    uri      => 1,
+};
+
+# property name to docinfo attribute
+use constant SWISH_DOC_PROP_MAP => {
+    swishencoding     => 'encoding',
+    swishmime         => 'mime',
+    swishlastmodified => 'mtime',
+    swishwordnum      => 'nwords',
+    swishparser       => 'parser',
+    swishdocsize      => 'size',
+    swishdocpath      => 'uri'
+};
 
 # load the XS at runtime, since we need $VERSION
 require XSLoader;
@@ -49,23 +77,6 @@ my @constants = ( grep {m/^SWISH_/} keys %SWISH::3:: );
 
 our %EXPORT_TAGS = ( 'constants' => [@constants], );
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'constants'} } );
-
-# these numbers are assigned via enum in libswish3.h
-# and so are too tedious to parse via Makefile.PL
-# since they are typically only added-to, not a big deal
-# to maintain manually here.
-# we can't just assign to the constant value since the
-# constants are not loaded until run time above via XSLoader.
-use constant SWISH_DOC_FIELDS_MAP => {
-    encoding => 10,
-    mime     => 8,
-    mtime    => 5,
-    nwords   => 7,
-    parser   => 9,
-    size     => 4,
-    title    => 3,
-    uri      => 1,
-};
 
 # convenience accessors
 *config   = \&get_config;
@@ -235,6 +246,11 @@ An array of method names that can be called on a SWISH::3::Token object.
 
 A hashref of method names to id integer values. The integer values
 are assigned in libswish3.h.
+
+=item SWISH_DOC_PROP_MAP
+
+A hashref of built-in property names to docinfo attribute names.
+The values of SWISH_DOC_PROP_MAP are the keys of SWISH_DOC_FIELDS_MAP.
 
 =back
 
@@ -767,6 +783,8 @@ and are defined there.
 =item SWISH_INDEX_FORMAT
 
 =item SWISH_INDEX_LOCALE
+
+=item SWISH_INDEX_STEMMER_LANG
 
 =item SWISH_INDEX_NAME
 
