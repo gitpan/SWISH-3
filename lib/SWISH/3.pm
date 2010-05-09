@@ -4,7 +4,7 @@ use 5.008_003;
 
 package SWISH::3;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 # set by libswish3 in swish.c but that happens after %ENV has been
 # initialized at Perl compile time.
@@ -760,6 +760,10 @@ and are defined there.
 
 =item SWISH_DEFAULT_VALUE
 
+=item SWISH_DOM_CHAR
+
+=item SWISH_DOM_STR
+
 =item SWISH_ENCODING_ERROR
 
 =item SWISH_ESTRAIER_FORMAT
@@ -771,6 +775,8 @@ and are defined there.
 =item SWISH_HEADER_FILE
 
 =item SWISH_HEADER_ROOT
+
+=item SWISH_IGNORE_XMLNS
 
 =item SWISH_INCLUDE_FILE
 
@@ -789,6 +795,8 @@ and are defined there.
 =item SWISH_INDEX_NAME
 
 =item SWISH_KINOSEARCH_FORMAT
+
+=item SWISH_LATIN1_ENCODING
 
 =item SWISH_LOCALE
 
@@ -890,9 +898,20 @@ Peter Karman C<< perl@peknet.com >>
 
 =head1 COPYRIGHT
 
-Copyright 2008 Peter Karman.
-This program is free software; you can redistribute it and/or modify
-under the same terms as Perl itself.
+Copyright 2010 Peter Karman.
+
+This file is part of libswish3.
+
+libswish3 is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+libswish3 is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
 
 =head1 SEE ALSO
 

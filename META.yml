@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               SWISH-3
-version:            0.05
+version:            0.06
 abstract:           Perl interface to libswish3
 author:
     - Peter Karman <perl@peknet.com>
@@ -18,7 +18,7 @@ requires:
 resources:
     bugtracker:  http://rt.cpan.org/NoAuth/Bugs.html?Dist=SWISH-3
     homepage:    http://dev.swish-e.org/wiki/swish3
-    license:     http://dev.perl.org/licenses/
+    license:     GPL
     repository:  http://svn.swish-e.org/libswish3
 no_index:
     directory:

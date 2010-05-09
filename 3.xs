@@ -1,12 +1,26 @@
-/* Copyright 2008 Peter Karman (perl@peknet.com)
- * This program is free software; you can redistribute it and/or modify
- * under the same terms as Perl itself. 
+/*
+ * This file is part of libswish3
+ * Copyright (C) 2010 Peter Karman
+ *
+ *  libswish3 is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  libswish3 is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with libswish3; if not, write to the Free Software
+ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /* all XS stuff is prefixed with 'sp_' for Swish Perl */
 
 #include "xs_boiler.h"
-#include "headers.h"
+#include "libswish3.c"
 #include "macros.h"
 #include "xs_helpers.c"
 
@@ -61,6 +75,15 @@ _init(CLASS)
         RETVAL
 
 
+void
+_show_sizes(self)
+    SV* self;
+ 
+    CODE:
+        warn("sizeof pointer: %d\n", sizeof(SV*));
+        warn("sizeof IV: %d\n", sizeof(IV));
+
+
 
 char*
 xml2_version(self)
@@ -92,7 +115,8 @@ slurp(self, filename, ...)
         xmlChar* buf;
         struct stat info;
         boolean binmode;
-    
+        off_t buflen;
+         
     CODE:
         binmode = SWISH_FALSE;
         if ( items > 2 ) {
@@ -101,11 +125,19 @@ slurp(self, filename, ...)
         if (stat((char *)filename, &info)) {
             croak("Can't stat %s: %s\n", filename, strerror(errno));
         }
-        buf     = swish_io_slurp_file_len((xmlChar*)filename, info.st_size, binmode);
+        buflen = info.st_size;
+        if (swish_fs_looks_like_gz( (xmlChar*)filename )) {
+            //warn("%s looks like gz\n", filename);
+            buf = swish_io_slurp_gzfile_len((xmlChar*)filename, &buflen, binmode);
+        }
+        else {
+            buf = swish_io_slurp_file_len((xmlChar*)filename, buflen, binmode);
+        }
         RETVAL  = newSV(0);
-        sv_usepvn_mg(RETVAL, (char*)buf, info.st_size);
+        //warn("%s re-using SV with strlen %d\n", filename, buflen);
+        sv_usepvn_mg(RETVAL, (char*)buf, buflen);
         swish_memcount_dec(); // must do manually since Perl will free() it.
-        
+
     OUTPUT:
         RETVAL
 
@@ -431,6 +463,7 @@ debug(CLASS, ...)
         RETVAL = SWISH_DEBUG;
         if ( items > 1 ) {
             SWISH_DEBUG = SvIV( ST(1) );
+            warn("SWISH_DEBUG set to %d", SWISH_DEBUG);
         }
         
     OUTPUT:
