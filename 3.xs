@@ -20,7 +20,7 @@
 /* all XS stuff is prefixed with 'sp_' for Swish Perl */
 
 #include "xs_boiler.h"
-#include "libswish3.c"
+#include "libswish3.h"
 #include "macros.h"
 #include "xs_helpers.c"
 
@@ -80,8 +80,8 @@ _show_sizes(self)
     SV* self;
  
     CODE:
-        warn("sizeof pointer: %d\n", sizeof(SV*));
-        warn("sizeof IV: %d\n", sizeof(IV));
+        warn("sizeof pointer: %ld\n", sizeof(SV*));
+        warn("sizeof IV: %ld\n", sizeof(IV));
 
 
 
