@@ -115,7 +115,7 @@
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.2957"
+#define SWISH_LIB_VERSION           "0.1.2968"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -5038,7 +5038,8 @@ myerr(
 
     va_start(args, msg);
     vsnprintf((char *)str, 1000, (char *)msg, args);
-    xmlParserError(parser_data->ctxt, (char *)str);
+    /* passing args as last param is ignored but quiets a gcc warning */
+    xmlParserError(parser_data->ctxt, (char *)str, args);
     va_end(args);
 }
 
@@ -5068,7 +5069,8 @@ mywarn(
 
     va_start(args, msg);
     vsnprintf((char *)str, 1000, (char *)msg, args);
-    xmlParserWarning(parser_data->ctxt, (char *)str);
+    /* passing args as last param is ignored but quiets a gcc warning */
+    xmlParserWarning(parser_data->ctxt, (char *)str, args);
     va_end(args);
 }
 
@@ -7255,7 +7257,7 @@ swish_get_locale(
 {
     char *locale;
     
-    /* all C programs start with C locale, so initialize with LC_ALL */
+    /* initialize with LC_ALL sets all the relevant env vars */
     setlocale(LC_ALL, "");
     locale = setlocale(LC_ALL, "");
     if (locale == NULL || !strlen(locale)) {
@@ -7287,7 +7289,12 @@ swish_verify_utf8_locale(
 /* a bit about encodings: libxml2 takes whatever encoding the input XML is
  * (latin1, ascii, utf8, etc) and standardizes it using iconv (or other) in xmlChar as
  * UTF-8. However, we must ensure we have UTF-8 locale because all the mb* and wc*
- * routines rely on the locale to correctly interpret chars. 
+ * routines rely on the locale to correctly interpret chars.
+ *
+ * See also
+ * http://www.cl.cam.ac.uk/~mgk25/unicode.html#c
+ * and
+ * http://www.cl.cam.ac.uk/~mgk25/unicode.html#activate
  */
 
     loc = swish_get_locale(); 
@@ -7329,7 +7336,7 @@ swish_verify_utf8_locale(
                  SWISH_LOCALE);
 
         if (!setlocale(LC_CTYPE, SWISH_LOCALE)) {
-            SWISH_WARN("failed to set locale to %s", SWISH_LOCALE);
+            SWISH_WARN("failed to set locale to %s from %s", SWISH_LOCALE, loc);
         }
 
     }
