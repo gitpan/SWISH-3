@@ -119,6 +119,11 @@
 #define SWISH_DOM_STR              "/"
 #define SWISH_XMLNS_CHAR           ':'
 
+/* error codes */
+typedef enum {
+    SWISH_ERR_NO_SUCH_FILE = 1
+} SWISH_ERR_CODES;
+
 /* built-in id values */
 typedef enum {
     SWISH_META_DEFAULT_ID = 0,
@@ -521,6 +526,7 @@ void        swish_set_error_handle( FILE *where );
 void        swish_croak(const char *file, int line, const char *func, const char *msg,...);
 void        swish_warn(const char *file, int line, const char *func, const char *msg,...);
 void        swish_debug(const char *file, int line, const char *func, const char *msg,...);
+const char* swish_err_msg(int err_code);
 /*
 =cut
 */
@@ -539,8 +545,8 @@ void                swish_utf8_next_chr( xmlChar *s, int *i );
 void                swish_utf8_prev_chr( xmlChar *s, int *i );
 xmlChar *           swish_str_escape_utf8( xmlChar *utf8 );
 xmlChar *           swish_str_unescape_utf8( xmlChar *ascii );
-wchar_t *           swish_locale_to_wchar(xmlChar * str);
-xmlChar *           swish_wchar_to_locale(wchar_t * str);
+wchar_t *           swish_utf8_to_wchar(xmlChar * str);
+xmlChar *           swish_wchar_to_utf8(wchar_t * str);
 wchar_t *           swish_wstr_tolower(wchar_t *s);
 xmlChar *           swish_str_tolower(xmlChar *s );
 xmlChar *           swish_utf8_str_tolower(xmlChar *s);

@@ -62,12 +62,14 @@ static REGEXP*  sp_get_regex_from_sv( SV* regex_sv );
 static SV*      sp_Stash_new();
 static void     sp_Stash_set( SV *stash, const char *key, SV *value );
 static void     sp_Stash_set_char( SV *stash, const char *key, char *value );
+static void     sp_Stash_set_int( SV *stash, const char *key, int i);
 static SV*      sp_Stash_get( SV *stash, const char *key );
 static char*    sp_Stash_get_char( SV *stash, const char *key );
 static void     sp_Stash_replace( SV *stash, const char *key, SV *value );
 static int      sp_Stash_inner_refcnt( SV *stash );
 static void     sp_Stash_destroy( SV *stash );
 static void     sp_Stash_dec_values( SV *stash );
+static void     sp_isw_report( uint32_t codepoint );
 
 
 static SV*
@@ -100,6 +102,17 @@ sp_Stash_set_char( SV *object, const char *key, char *value )
     hash = sp_extract_hash( object );
     //warn("Storing %s => %s in stash\n", key, value);
     sp_hv_store_char( hash, key, value );
+}
+
+static void
+sp_Stash_set_int( SV *object, const char *key, int i)
+{
+    dTHX;
+    HV *hash;
+    SV *value;
+    value = newSViv((const IV)i);
+    hash = sp_extract_hash( object );
+    sp_hv_store( hash, key, value );
 }
 
 static SV*
@@ -804,3 +817,24 @@ sp_tokenize3(
     return num_tokens;
 }
 
+static char *wctypes[] = {
+    "alnum", "cntrl", "ideogram", "print", "special",
+    "alpha", "digit", "lower", "punct", "upper",
+    "blank", "graph", "phonogram", "space", "xdigit"
+};
+
+static int n_wctypes = 15;
+
+static void
+sp_isw_report( 
+    uint32_t codepoint 
+)
+{
+    int j;
+
+    warn("%lc  %d  0x%04x\n", codepoint, codepoint, codepoint);
+
+    for (j = 0; j < n_wctypes; j++) {
+        warn("%10s => %d\n", wctypes[j], iswctype(codepoint, wctype(wctypes[j])));
+    }
+}

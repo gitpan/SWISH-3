@@ -4,17 +4,7 @@ use 5.008_003;
 
 package SWISH::3;
 
-our $VERSION = '0.08_01';
-
-# set locale here to same as libswish3 default,
-# because setting it in libswish3.c's
-# swish_verify_utf8_locale() does not seem to
-# work on all systems.
-BEGIN {
-    use POSIX qw(locale_h);
-    use locale;
-    setlocale( LC_ALL, 'en_US.UTF-8' );
-}
+our $VERSION = '0.08_02';
 
 # set by libswish3 in swish.c but that happens after %ENV has been
 # initialized at Perl compile time.
@@ -284,6 +274,13 @@ Returns the libswish3 version.
 
 Returns the Perl reference count for I<object>.
 
+=head2 wc_report( I<codepoint> )
+
+Prints a isw* summary to stderr for I<codepoint>. I<codepoint>
+should be a positive integer representing a Unicode codepoint.
+
+This prints a report similar to the swish_isw.c example script.
+
 =head1 OBJECT METHODS
 
 =head2 new( I<args> )
@@ -313,6 +310,12 @@ I<str> should contain the API headers.
 =head2 parse_fh( I<filehandle> )
 
 B<Not yet implemented.>
+
+=head2 error
+
+Returns the error message from the last call to parse(), parse_file()
+parse_buffer() or parse_fh(). If there was no error on the last
+call to one of those methods, returns undef.
 
 =head2 set_config( I<swish_3_config> )
 
