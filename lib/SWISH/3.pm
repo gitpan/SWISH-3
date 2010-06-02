@@ -4,7 +4,7 @@ use 5.008_003;
 
 package SWISH::3;
 
-our $VERSION = '0.08_03';
+our $VERSION = '0.08_04';
 
 # set by libswish3 in swish.c but that happens after %ENV has been
 # initialized at Perl compile time.
@@ -262,6 +262,12 @@ prints the contents of SWISH::3::Data to stderr.
 
 =head1 CLASS METHODS
 
+=head2 new( I<args> )
+
+I<args> should be an array of key/value pairs. See SYNOPSIS.
+
+Returns a new SWISH::3 instance.
+
 =head2 xml2_version
 
 Returns the libxml2 version used by libswish3.
@@ -281,17 +287,12 @@ should be a positive integer representing a Unicode codepoint.
 
 This prints a report similar to the swish_isw.c example script.
 
-=head1 OBJECT METHODS
-
-=head2 new( I<args> )
-
-I<args> should be an array of key/value pairs. See SYNOPSIS.
-
-Returns a new SWISH::3 instance.
-
 =head2 slurp( I<filename> )
 
-Returns the contents of I<filename> as a scalar string.
+Returns the contents of I<filename> as a scalar string. May also
+be called as an object method.
+
+=head1 OBJECT METHODS
 
 =head2 parse( I<filename_or_filehandle_or_string> )
 
