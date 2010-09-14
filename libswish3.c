@@ -74,6 +74,8 @@
 #include <libxml/xmlreader.h>
 #include <libxml/xmlwriter.h>
 #include <libxml/encoding.h>
+#include <libxml/xinclude.h>
+#include <libxml/uri.h>
 
 
 #define LIBSWISH3_SINGLE_FILE 1
@@ -115,7 +117,7 @@
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.2982"
+#define SWISH_LIB_VERSION           "0.1.3051"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -158,6 +160,7 @@
 #define SWISH_TOKENIZE              "Tokenize"
 #define SWISH_CASCADE_META_CONTEXT  "CascadeMetaContext"
 #define SWISH_IGNORE_XMLNS          "IgnoreXMLNameSpaces"
+#define SWISH_FOLLOW_XINCLUDE       "FollowXInclude"
 
 /* tags */
 #define SWISH_DEFAULT_METANAME    "swishdefault"
@@ -242,9 +245,11 @@ typedef enum {
 
 #if defined(WIN32) && !defined (__CYGWIN__)
 #define SWISH_PATH_SEP             '\\'
+#define SWISH_PATH_SEP_STR         "\\"
 #define SWISH_EXT_SEP              "\\."
 #else
 #define SWISH_PATH_SEP             '/'
+#define SWISH_PATH_SEP_STR         "/"
 #define SWISH_EXT_SEP              "/."
 #endif
 
@@ -363,6 +368,7 @@ struct swish_ConfigFlags
     boolean         tokenize;
     boolean         cascade_meta_context;
     boolean         ignore_xmlns;
+    boolean         follow_xinclude;
     xmlHashTablePtr meta_ids;
     xmlHashTablePtr prop_ids;
     //xmlHashTablePtr contexts;
@@ -511,6 +517,7 @@ struct swish_ParserData
 void            swish_setup();
 const char *    swish_lib_version();
 const char *    swish_libxml2_version();
+void            swish_setenv(char * name, char * value, int override);
 /*
 =cut
 */
@@ -520,9 +527,9 @@ const char *    swish_libxml2_version();
 */
 swish_3 *       swish_3_init( void (*handler) (swish_ParserData *), void *stash );
 void            swish_3_free( swish_3 *s3 );
-int             swish_parse_file( swish_3 * s3, xmlChar *filename);
-unsigned int    swish_parse_fh( swish_3 * s3, FILE * fh);
-int             swish_parse_buffer( swish_3 * s3, xmlChar * buf);
+int             swish_parse_file( swish_3 * s3, xmlChar *filename );
+unsigned int    swish_parse_fh( swish_3 * s3, FILE * fh );
+int             swish_parse_buffer( swish_3 * s3, xmlChar * buf );
 unsigned int    swish_parse_directory( swish_3 *s3, xmlChar *dir, boolean follow_symlinks );
 /*
 =cut
@@ -551,6 +558,7 @@ boolean     swish_fs_is_link( xmlChar *path );
 off_t       swish_fs_get_file_size( xmlChar *path );
 time_t      swish_fs_get_file_mtime( xmlChar *path );
 xmlChar *   swish_fs_get_file_ext( xmlChar *url );
+xmlChar *   swish_fs_get_path( xmlChar *url );
 boolean     swish_fs_looks_like_gz( xmlChar *file );
 /*
 =cut
@@ -779,6 +787,7 @@ void                swish_nb_add_str(   swish_NamedBuffer * nb,
                                         boolean cleanwsp,
                                         boolean autovivify);
 void                swish_buffer_append( xmlBufferPtr buf, xmlChar * txt, int len );
+void                swish_buffer_concat( swish_NamedBuffer *nb1, swish_NamedBuffer *nb2 );
 xmlChar*            swish_nb_get_value( swish_NamedBuffer* nb, xmlChar* key );
 /*
 =cut
@@ -790,6 +799,7 @@ xmlChar*            swish_nb_get_value( swish_NamedBuffer* nb, xmlChar* key );
 swish_Property *    swish_property_init( xmlChar *propname );
 void                swish_property_free( swish_Property *prop );
 void                swish_property_debug( swish_Property *prop );
+int                 swish_property_get_builtin_id( xmlChar *propname );
 int                 swish_property_get_id( xmlChar *propname, xmlHashTablePtr properties );
 /*
 =cut
@@ -2129,6 +2139,7 @@ swish_config_init_flags(
     flags->tokenize = SWISH_TRUE;
     flags->cascade_meta_context = SWISH_FALSE;  /* add tokens to every metaname in the stack */
     flags->ignore_xmlns = SWISH_TRUE;
+    flags->follow_xinclude = SWISH_TRUE;
     flags->meta_ids = swish_hash_init(8);
     flags->prop_ids = swish_hash_init(8);
     //flags->contexts = swish_hash_init(8); // TODO cache these to save malloc/frees
@@ -2150,6 +2161,7 @@ swish_config_flags_free(
         SWISH_DEBUG_MSG("config->tokenize was %d", flags->tokenize);
         SWISH_DEBUG_MSG("config->cascade_meta_context was %d", flags->cascade_meta_context);
         SWISH_DEBUG_MSG("config->ignore_xmlns was %d", flags->ignore_xmlns);
+        SWISH_DEBUG_MSG("config->follow_xinclude was %d", flags->follow_xinclude);
     }
     swish_xfree(flags);
 }
@@ -2556,19 +2568,26 @@ swish_config_merge(
 
 /* set flags */
     if (swish_hash_exists(config2->misc, BAD_CAST SWISH_TOKENIZE)) {
-        config2->flags->tokenize = (boolean)swish_string_to_int(swish_hash_fetch(config2->misc, BAD_CAST SWISH_TOKENIZE));
+        config2->flags->tokenize = swish_string_to_boolean(swish_hash_fetch(config2->misc, BAD_CAST SWISH_TOKENIZE));
     }
     config1->flags->tokenize = config2->flags->tokenize;
     if (swish_hash_exists(config2->misc, BAD_CAST SWISH_CASCADE_META_CONTEXT)) {
         config2->flags->cascade_meta_context = 
-            (boolean)swish_string_to_int(swish_hash_fetch(config2->misc, BAD_CAST SWISH_CASCADE_META_CONTEXT));
+            swish_string_to_boolean(swish_hash_fetch(config2->misc, BAD_CAST SWISH_CASCADE_META_CONTEXT));
     }
     config1->flags->cascade_meta_context = config2->flags->cascade_meta_context;
     if (swish_hash_exists(config2->misc, BAD_CAST SWISH_IGNORE_XMLNS)) {
         config2->flags->ignore_xmlns = 
-            (boolean)swish_string_to_int(swish_hash_fetch(config2->misc, BAD_CAST SWISH_IGNORE_XMLNS));
+            swish_string_to_boolean(swish_hash_fetch(config2->misc, BAD_CAST SWISH_IGNORE_XMLNS));
     }
     config1->flags->ignore_xmlns = config2->flags->ignore_xmlns;
+    if (swish_hash_exists(config2->misc, BAD_CAST SWISH_FOLLOW_XINCLUDE)) {
+        config2->flags->follow_xinclude =
+            swish_string_to_boolean(swish_hash_fetch(config2->misc, BAD_CAST SWISH_FOLLOW_XINCLUDE));
+    }
+    config1->flags->follow_xinclude = config2->flags->follow_xinclude;
+
+
 
 
     if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
@@ -2624,7 +2643,7 @@ swish_docinfo_init(
 )
 {
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("init'ing docinfo");
 
     swish_DocInfo *docinfo = swish_xmalloc(sizeof(swish_DocInfo));
@@ -2641,7 +2660,7 @@ swish_docinfo_init(
     docinfo->is_gzipped = SWISH_FALSE;
 
     /*
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY) {
         SWISH_DEBUG_MSG("docinfo all ready");
         swish_docinfo_debug(docinfo);
     }
@@ -2656,12 +2675,12 @@ swish_docinfo_free(
     swish_DocInfo *ptr
 )
 {
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY) {
         SWISH_DEBUG_MSG("freeing swish_DocInfo");
-
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    }
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY) {
         swish_docinfo_debug(ptr);
-    
+    }
     if (ptr->ref_cnt != 0) {
         SWISH_WARN("docinfo ref_cnt != 0: %d", ptr->ref_cnt);
     }
@@ -2672,35 +2691,35 @@ swish_docinfo_free(
     ptr->is_gzipped = SWISH_FALSE;
 
 /* encoding and mime are malloced via xmlstrdup elsewhere */
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("freeing docinfo->encoding");
     swish_xfree(ptr->encoding);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("freeing docinfo->mime");
     if (ptr->mime != NULL)
         swish_xfree(ptr->mime);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("freeing docinfo->uri");
     if (ptr->uri != NULL)
         swish_xfree(ptr->uri);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("freeing docinfo->ext");
     if (ptr->ext != NULL)
         swish_xfree(ptr->ext);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("freeing docinfo->parser");
     if (ptr->parser != NULL)
         swish_xfree(ptr->parser);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("freeing docinfo ptr");
     swish_xfree(ptr);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_MEMORY)
         SWISH_DEBUG_MSG("swish_DocInfo all freed");
 }
 
@@ -2735,46 +2754,49 @@ swish_docinfo_check(
 /* this fails with non-filenames like db ids, etc. */
 
     if (docinfo->ext == NULL) {
-        if (ext != NULL)
+        if (ext != NULL) {
             docinfo->ext = swish_xstrdup(ext);
-        else
+        }
+        else {
             docinfo->ext = swish_xstrdup((xmlChar *)"none");
-
+        }
     }
 
-    if (ext != NULL)
+    if (ext != NULL) {
         swish_xfree(ext);
-
+    }
+    
     if (!docinfo->mime) {
-        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
             SWISH_DEBUG_MSG
                 ("no MIME known. guessing based on uri extension '%s'",
                  docinfo->ext);
+        }
         docinfo->mime = swish_mime_get_type(config, docinfo->ext);
     }
     else {
-        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
             SWISH_DEBUG_MSG("found MIME type in headers: '%s'", docinfo->mime);
-
+        }
     }
 
     if (!docinfo->parser) {
-        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
             SWISH_DEBUG_MSG
                 ("no parser defined in headers -- deducing from content type '%s'",
                  docinfo->mime);
-
+        }
         docinfo->parser = swish_mime_get_parser(config, docinfo->mime);
     }
     else {
-        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+        if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
             SWISH_DEBUG_MSG("found parser in headers: '%s'", docinfo->parser);
-
+        }
     }
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
         swish_docinfo_debug(docinfo);
-
+    }
     return ok;
 
 }
@@ -2807,30 +2829,31 @@ swish_docinfo_from_filesystem(
         return 0;
     }
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
         SWISH_DEBUG_MSG("handling url %s", filename);
-
-    if (i->uri != NULL)
+    }
+    if (i->uri != NULL) {
         swish_xfree(i->uri);
-
+    }
     i->uri = swish_xstrdup(filename);
     i->mtime = swish_fs_get_file_mtime(filename);
     i->size = swish_fs_get_file_size(filename);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
         SWISH_DEBUG_MSG("handling mime");
-
-    if (i->mime != NULL)
+    }
+    if (i->mime != NULL) {
         swish_xfree(i->mime);
-
+    }
     i->mime = swish_mime_get_type(parser_data->s3->config, i->ext);
 
-    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO)
+    if (SWISH_DEBUG & SWISH_DEBUG_DOCINFO) {
         SWISH_DEBUG_MSG("handling parser");
-
-    if (i->parser != NULL)
+    }
+    if (i->parser != NULL) {
         swish_xfree(i->parser);
-
+    }
+    
     i->parser = swish_mime_get_parser(parser_data->s3->config, i->mime);
 
     return 1;
@@ -3384,6 +3407,37 @@ swish_fs_get_file_ext(
         SWISH_DEBUG_MSG("ext is %s", p);
 
     return swish_str_tolower(p);
+}
+
+xmlChar *
+swish_fs_get_path(
+    xmlChar *url
+)
+{
+    xmlChar *p;
+    xmlChar *path;
+    
+    if (SWISH_DEBUG & SWISH_DEBUG_TOKENIZER)
+        SWISH_DEBUG_MSG("parsing url %s for path", url);
+
+    p = findlast(url, (xmlChar *)SWISH_PATH_SEP_STR);
+
+    if (p == NULL) {
+        return p;
+    }
+    if (p != NULL && *p != SWISH_PATH_SEP) {
+        return NULL;
+    }
+    if (xmlStrEqual(url, p)) {
+        return NULL;
+    }
+
+    p++;    /* bump to include PATH_SEP */
+    path = xmlStrsub(url, 0, p - url);
+    
+    //SWISH_DEBUG_MSG("url=%s  path=%s", url, path);
+    
+    return path;
 }
 
 boolean
@@ -4272,6 +4326,8 @@ swish_mime_get_parser(
 #include <libxml/tree.h>
 #include <libxml/debugXML.h>
 #include <libxml/xmlmemory.h>
+#include <libxml/xinclude.h>
+#include <libxml/uri.h>
 
 #include "libswish3.h"
 #endif
@@ -4465,6 +4521,18 @@ static void free_swishTag(
 static void
 free_swishTagStack(
     swish_TagStack *stack
+);
+
+static void
+process_xinclude(
+    swish_ParserData *parser_data,
+    xmlChar *uri,
+    boolean is_text
+);
+
+static void
+xinclude_handler(
+    swish_ParserData *parser_data
 );
 
 /***********************************************************************
@@ -4930,7 +4998,11 @@ mystartElementNs(
 {
     int i, j, len;
     xmlChar **atts;
+    xmlChar *xinclude_uri;
+    boolean xinclude_is_text;
+    swish_ParserData *parser_data;
     atts = NULL;
+    parser_data = (swish_ParserData*)data;
 
     if (nb_attributes > 0) {
         atts = swish_xmalloc(((nb_attributes * 2) + 1) * sizeof(xmlChar *));
@@ -4950,12 +5022,41 @@ mystartElementNs(
     }
 
     if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
-        SWISH_DEBUG_MSG(" tag: %s nb_attributes %d", localname, nb_attributes);
+        //SWISH_DEBUG_MSG(" tag: %s nb_attributes %d", localname, nb_attributes);
         if (atts != NULL) {
             for (i = 0; (atts[i] != NULL); i += 2) {
-                SWISH_DEBUG_MSG(" att: %s=%s", atts[i], atts[i + 1]);
+                //SWISH_DEBUG_MSG(" att: %s=%s", atts[i], atts[i + 1]);
 /* SWISH_DEBUG_MSG(" att: %s=", atts[i++], atts[i] || ""); */
             }
+        }
+    }
+            
+    /* check for XInclude */
+    if ((xmlStrEqual(URI, XINCLUDE_OLD_NS) || xmlStrEqual(URI, XINCLUDE_NS))
+        &&
+        xmlStrEqual(localname, XINCLUDE_NODE)
+        &&
+        atts != NULL
+    ) {
+    
+        /*
+        SWISH_DEBUG_MSG("localname=%s  xmlns_prefix=%s  URI=%s", 
+            localname, xmlns_prefix, URI);
+        */
+        xinclude_is_text = SWISH_FALSE;
+        xinclude_uri = NULL;
+        for (i = 0; (atts[i] != NULL); i += 2) {
+            //SWISH_DEBUG_MSG(" att: %s=%s", atts[i], atts[i + 1]);
+            if (xmlStrEqual(atts[i], XINCLUDE_HREF)) {
+                //SWISH_DEBUG_MSG("XInclude: %s", atts[i + 1]);
+                xinclude_uri = atts[i+1];
+            }
+            if (xmlStrEqual(atts[i], XINCLUDE_PARSE)) {
+                xinclude_is_text = (boolean)xmlStrEqual(atts[i+1], XINCLUDE_PARSE_TEXT);
+            }
+        }
+        if (xinclude_uri != NULL && parser_data->s3->config->flags->follow_xinclude) {
+            process_xinclude( parser_data, xinclude_uri, xinclude_is_text );
         }
     }
 
@@ -4967,6 +5068,124 @@ mystartElementNs(
         }
         swish_xfree(atts);
     }
+}
+
+static void
+xinclude_handler(
+    swish_ParserData *parser_data
+)
+{   
+    swish_ParserData *parent;
+    swish_Token *t;
+    swish_TokenIterator *it;
+    
+    parent = (swish_ParserData*)parser_data->s3->stash;
+    it = parser_data->token_iterator;
+    while ((t = swish_token_iterator_next_token(it)) != NULL) {
+        //swish_token_debug(t);
+        swish_token_list_add_token(
+            parent->token_iterator->tl,
+            t->value,
+            t->len + 1, // include the NUL
+            t->meta,
+            t->context
+        );
+    }
+    parent->docinfo->nwords += parser_data->docinfo->nwords;
+    
+    swish_buffer_concat(parent->properties, parser_data->properties);
+    swish_buffer_concat(parent->metanames, parser_data->metanames);
+}
+
+static void
+process_xinclude(
+    swish_ParserData *parser_data,
+    xmlChar *uri,
+    boolean is_text
+)
+{
+    xmlChar *xuri;
+    xmlChar *path;
+    void *cur_stash;
+    int res;
+    swish_ParserData *child_data;
+    boolean path_is_absolute, path_needs_free;
+
+    path_needs_free = SWISH_FALSE;
+    
+    /* test if absolute path */
+    if (uri[0] == SWISH_PATH_SEP) {
+        xuri = uri;
+        path = NULL;
+        path_is_absolute = SWISH_TRUE;
+    }
+    else {
+        path = swish_fs_get_path(parser_data->docinfo->uri);
+        if (path == NULL) {
+            // no path == cwd
+            path = swish_xmalloc(3);
+            snprintf((char*)path, 3, ".%c", SWISH_PATH_SEP);
+            path[2] = '\0';
+            path_needs_free = SWISH_TRUE;
+        }
+        xuri = xmlBuildURI(uri, path);
+        if (xuri == NULL) {
+            SWISH_CROAK("Unable to build XInclude URI for %s and %s", uri, path);
+        }
+        path_is_absolute = SWISH_FALSE;
+    }
+    
+    if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+        SWISH_DEBUG_MSG("xinclude  uri=%s  path=%s  xuri=%s", parser_data->docinfo->uri, path, xuri);
+    }
+        
+    /*
+     * set up our internal handler function,
+     * which merges the 2 docs together. This isn't ideal, but since we 
+     * are using SAX we can't leverage all the built-in XInclude support
+     * that is part of libxml2.
+     */
+    cur_stash = parser_data->s3->stash;
+    parser_data->s3->stash = parser_data;
+    flush_buffer(   parser_data, 
+                    parser_data->metastack->head->baked,
+                    parser_data->metastack->head->context
+                );
+    child_data = init_parser_data(parser_data->s3);
+    child_data->docinfo = swish_docinfo_init();
+    child_data->docinfo->ref_cnt++;
+
+    if (!swish_docinfo_from_filesystem(xuri, child_data->docinfo, child_data)) {
+        SWISH_WARN("Skipping XInclude %s", xuri);
+    }
+    else {
+        if (is_text && !xmlStrEqual(child_data->docinfo->parser, BAD_CAST SWISH_PARSER_TXT)) {
+            swish_xfree(child_data->docinfo->parser);
+            child_data->docinfo->parser = swish_xstrdup( BAD_CAST SWISH_PARSER_TXT );
+        }
+        res = docparser(child_data, xuri, NULL, 0);
+        xinclude_handler(child_data);
+    }
+    
+    /* clean up */
+    free_parser_data(child_data);
+    if (!path_is_absolute) {
+        if (path_needs_free) {
+            swish_xfree(path);
+        }
+        else {
+            xmlFree(path);
+        }
+        xmlFree(xuri);
+    }
+    else {
+        if (path != NULL) {
+            swish_xfree(path);
+        }
+    }
+    
+    /* restore stash */
+    parser_data->s3->stash = cur_stash;
 }
 
 /* 
@@ -5099,6 +5318,7 @@ close_tag(
             SWISH_DEBUG_MSG("freeing parser_data->tag '%s'", parser_data->tag);
         }
         swish_xfree(parser_data->tag);
+        parser_data->tag = NULL;
     }
     
     parser_data->tag = bake_tag(parser_data, (xmlChar *)tag, NULL, (xmlChar *)xmlns_prefix);
@@ -5141,46 +5361,29 @@ buffer_characters(
     int len
 )
 {
-    int i;
-    xmlChar output[len];
-    xmlBufferPtr buf = parser_data->meta_buf;
-
-/*
-* why not wchar_t ? len is number of bytes, not number of
-* characters, so xmlChar (i.e., char) works
-*/
-
-/*
-* SWISH_DEBUG_MSG( "sizeof output buf is %d; len was %d\n", sizeof(output),
-* len );
-*/
 
     if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
         SWISH_DEBUG_MSG("appending %d bytes to buffer (bump_word=%d)", 
             len, parser_data->bump_word);
     }
 
-    for (i = 0; i < len; i++) {
-        output[i] = ch[i];
-    }
-    output[i] = '\0';
-
-    if (parser_data->bump_word && xmlBufferLength(buf)) {
-        //SWISH_DEBUG_MSG("bump_word is true; appending TOKENPOS_BUMPER to buffer");
-        swish_buffer_append(buf, (xmlChar *)SWISH_TOKENPOS_BUMPER, 1);
+    if (parser_data->bump_word && xmlBufferLength(parser_data->meta_buf)) {
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {    
+            SWISH_DEBUG_MSG("bump_word is true; appending TOKENPOS_BUMPER to meta_buf");
+        }
+        swish_buffer_append(parser_data->meta_buf, (xmlChar *)SWISH_TOKENPOS_BUMPER, 1);
     }
     
-    swish_buffer_append(buf, output, len);
+    swish_buffer_append(parser_data->meta_buf, BAD_CAST ch, len);
 
     if (parser_data->bump_word && xmlBufferLength(parser_data->prop_buf)) {
-        //SWISH_DEBUG_MSG("bump_word is true; appending TOKENPOS_BUMPER to buffer");
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+            SWISH_DEBUG_MSG("bump_word is true; appending TOKENPOS_BUMPER to prop_buf");
+        }
         swish_buffer_append(parser_data->prop_buf, (xmlChar *)SWISH_TOKENPOS_BUMPER, 1);
     }
-    else if (xmlBufferLength(parser_data->prop_buf)) {
-        swish_buffer_append(parser_data->prop_buf, (xmlChar*)" ", 1);
-    }
 
-    swish_buffer_append(parser_data->prop_buf, output, len);
+    swish_buffer_append(parser_data->prop_buf, BAD_CAST ch, len);
     
     // reset
     parser_data->bump_word = SWISH_FALSE;
@@ -5316,10 +5519,9 @@ xmlSAXHandler my_parser = {
     mycomments,                 /* comment */
     (warningSAXFunc) & mywarn,  /* xmlParserWarning */
     (errorSAXFunc) & mywarn,     /* xmlParserError */
-    (fatalErrorSAXFunc) & myerr,        /* xmlfatalParserError */
+    (fatalErrorSAXFunc) & myerr, /* xmlfatalParserError */
     NULL,                       /* getParameterEntity */
-    NULL,                       /* cdataBlock -- should we handle this too *
-                                 * ?? */
+    NULL,                       /* cdataBlock */
     NULL,                       /* externalSubset; */
     XML_SAX2_MAGIC,
     NULL,
@@ -5350,9 +5552,10 @@ docparser(
         return 1;
     }
 
-    if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+    if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
         SWISH_DEBUG_MSG("%s -- using %s parser [%c]", parser_data->docinfo->uri, parser, parser[0]);
-
+    }
+    
 /*
 * slurp file if not already in memory 
 */
@@ -5379,21 +5582,18 @@ docparser(
         parser_data->is_html = SWISH_TRUE;
         ret = html_parser(my_parser_ptr, parser_data, buffer, size);
     }
-
-    else if (parser[0] == 'X' || parser[0] == 'x')
+    else if (parser[0] == 'X' || parser[0] == 'x') {
         ret = xml_parser(my_parser_ptr, parser_data, buffer, size);
-
-    else if (parser[0] == 'T' || parser[0] == 't')
+    }
+    else if (parser[0] == 'T' || parser[0] == 't') {
         ret = txt_parser(parser_data, (xmlChar *)buffer, size);
-
-    else
-        SWISH_CROAK("no parser known for MIME '%s'", mime);
-
+    }
+    else {
+        SWISH_CROAK("no parser known for MIME '%s' parser '%s'", mime, parser);
+    }
+    
     if (filename) {
-
-/*
-* SWISH_DEBUG_MSG( "freeing buffer"); 
-*/
+        //SWISH_DEBUG_MSG("freeing buffer for %s", filename);
         swish_xfree(buffer);
     }
 
@@ -5471,7 +5671,7 @@ init_parser_data(
 * shortcut rather than looking parser up in hash for each tag event 
 */
     ptr->is_html = SWISH_FALSE;
-
+        
 /*
 * always start at first byte 
 */
@@ -5484,9 +5684,10 @@ init_parser_data(
 */
     ptr->ctxt = NULL;
 
-    if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+    if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
         SWISH_DEBUG_MSG("init done for parser_data");
-
+    }
+    
     return ptr;
 
 }
@@ -5882,7 +6083,7 @@ get_env_vars(
 * init the global env vars, but don't override if already set 
 */
 
-    setenv("SWISH_PARSER_WARNINGS", "1", 0);
+    swish_setenv("SWISH_PARSER_WARNINGS", "1", 0);
     SWISH_PARSER_WARNINGS = swish_string_to_int(getenv("SWISH_PARSER_WARNINGS"));
 
     if (SWISH_DEBUG) {
@@ -6327,9 +6528,8 @@ xml_parser(
         || (ctxt->str_xml_ns == NULL)) {
 
 /*
-* xmlErrMemory is/was not a public func but is in
-* parserInternals.h * basically, this is a bad, fatal error, so
-* we'll just die 
+* xmlErrMemory is/was not a public func but is in parserInternals.h.
+* basically, this is a bad, fatal error, so we'll just die.
 */
 
 /*
@@ -6347,16 +6547,21 @@ xml_parser(
    gets freed.
 */
     parser_data->ctxt = ctxt;
-    xmlParseDocument(ctxt);
+    if (xmlParseDocument(ctxt) < 0) {
+        SWISH_WARN("recovering from libxml2 error for %s", parser_data->docinfo->uri);
+    }
     parser_data->ctxt = NULL;
 
-    if (ctxt->wellFormed)
+    if (ctxt->wellFormed) {
         ret = 0;
+    }
     else {
-        if (ctxt->errNo != 0)
+        if (ctxt->errNo != 0) {
             ret = ctxt->errNo;
-        else
+        }
+        else {
             ret = -1;
+        }
     }
     ctxt->sax = oldsax;
     if (ctxt->myDoc != NULL) {
@@ -6981,6 +7186,12 @@ static void print_buffer(
     xmlChar *label,
     xmlChar *name
 );
+static void
+cat_buffer(
+    xmlBufferPtr buffer,
+    swish_NamedBuffer *nb2,
+    xmlChar *name
+);
 
 static void
 add_name_to_hash(
@@ -7132,20 +7343,28 @@ swish_nb_add_str(
 
 /* if the buf already exists and we're about to add more, append the joiner */
     if (xmlBufferLength(buf)) {
+        if (SWISH_DEBUG & SWISH_DEBUG_NAMEDBUFFER) {
+            SWISH_DEBUG_MSG("appending string joiner '%s' to '%s' buffer", joiner, name);
+        }
         swish_buffer_append(buf, joiner, xmlStrlen(joiner));
     }
 
     if (cleanwsp) {
-        //SWISH_DEBUG_MSG("before cleanwsp: '%s'", str);
+        if (SWISH_DEBUG & SWISH_DEBUG_NAMEDBUFFER) {
+            SWISH_DEBUG_MSG("before cleanwsp: '%s'", str);
+        }
         swish_str_ctrl_to_ws(str);
         nowhitesp = swish_str_skip_ws(str);
         swish_str_trim_ws(nowhitesp);
-        //SWISH_DEBUG_MSG("after  cleanwsp: adding '%s' to buffer '%s'", nowhitesp, name);
+        if (SWISH_DEBUG & SWISH_DEBUG_NAMEDBUFFER) {
+            SWISH_DEBUG_MSG("after  cleanwsp: adding '%s' to buffer '%s'", nowhitesp, name);
+        }
         swish_buffer_append(buf, nowhitesp, xmlStrlen(nowhitesp));
     }
     else {
-        if (SWISH_DEBUG & SWISH_DEBUG_NAMEDBUFFER) 
-            SWISH_DEBUG_MSG("adding '%s' to buffer '%s'", str, name); 
+        if (SWISH_DEBUG & SWISH_DEBUG_NAMEDBUFFER) {
+            SWISH_DEBUG_MSG("adding '%s' to buffer '%s'", str, name);
+        }
         swish_buffer_append(buf, str, len);
     }
 
@@ -7176,9 +7395,35 @@ swish_buffer_append(
     }
 }
 
+static void
+cat_buffer(
+    xmlBufferPtr buffer,
+    swish_NamedBuffer *nb2,
+    xmlChar *name
+)
+{
+    xmlChar *buf2;
+    buf2 = swish_nb_get_value(nb2, name);
+    if (xmlStrlen(buf2)) {
+        if (xmlBufferLength(buffer)) {
+            xmlBufferCat(buffer, (xmlChar *)SWISH_TOKENPOS_BUMPER);
+        }
+        xmlBufferCat(buffer, buf2);
+    }
+}
+
+void
+swish_buffer_concat(
+    swish_NamedBuffer *nb1,
+    swish_NamedBuffer *nb2
+)
+{
+    xmlHashScan(nb1->hash, (xmlHashScanner)cat_buffer, nb2);
+}
+
 xmlChar *
 swish_nb_get_value(
-    swish_NamedBuffer * nb,
+    swish_NamedBuffer *nb,
     xmlChar *key
 )
 {
@@ -7283,13 +7528,17 @@ swish_string_to_boolean(
     }
     if (    buf[0] == 'Y' 
         ||  buf[0] == 'y'
-        ||  buf[0] == '1'    
+        ||  buf[0] == '1'
+        ||  (buf[0] == 'o' && buf[1] == 'n')
+        ||  (buf[0] == 'O' && buf[1] == 'N')
     ) {
         return SWISH_TRUE;
     }
     if (    buf[0] == 'N'
         ||  buf[0] == 'n'
         ||  buf[0] == '0'
+        ||  (buf[0] == 'o' && buf[1] == 'f')
+        ||  (buf[0] == 'O' && buf[1] == 'F')
     ) {
         return SWISH_FALSE;
     }
@@ -7526,7 +7775,7 @@ swish_verify_utf8_locale(
         enc = (xmlChar *)SWISH_DEFAULT_ENCODING;
     }
 
-    setenv("SWISH_ENCODING", (char *)enc, 0);   /* remember in env var, if not already set */
+    swish_setenv("SWISH_ENCODING", (char *)enc, 0);   /* remember in env var, if not already set */
 
     if (!loc) {
         SWISH_WARN("can't get locale via setlocale()");
@@ -8414,10 +8663,14 @@ swish_time_format(
 
 #ifndef LIBSWISH3_SINGLE_FILE
 #include <stdlib.h>
+#include <errno.h>
+#include <err.h>
+#include <string.h>
 #include "acconfig.h"
 #include "libswish3.h"
 #endif
 
+extern int errno;
 int SWISH_DEBUG = 0;            /* global var */
 int SWISH_WARNINGS = 1;         /* global var */
 
@@ -8486,6 +8739,20 @@ swish_3_free(
     swish_xfree(s3);
 }
 
+void
+swish_setenv(
+    char * name,
+    char * value,
+    int override
+)
+{
+    int ret;
+    ret = setenv(name, value, override);
+    if (ret != 0) {
+        SWISH_CROAK("setenv failed with %d: %s", errno, strerror(errno));
+    }
+}
+
 /* MUST call this before instantiating any swish_3 objects */
 void
 swish_setup(
@@ -8494,19 +8761,19 @@ swish_setup(
 
 /* global var that scripts can check to determine what version of Swish they are
  * using. the second 0 indicates that it will not override it if already set */
-    setenv("SWISH3", "1", 0);
+    swish_setenv("SWISH3", "1", 0);
 
 /* global debug flag */
-    setenv("SWISH_DEBUG", "0", 0);
-    setenv("SWISH_DEBUG_MEMORY", "0", 0);
-    setenv("SWISH_DEBUG_CONFIG", "0", 0);
-    setenv("SWISH_DEBUG_DOCINFO", "0", 0);
-    setenv("SWISH_DEBUG_IO", "0", 0);
-    setenv("SWISH_DEBUG_TOKENLIST", "0", 0);
-    setenv("SWISH_DEBUG_TOKENIZER", "0", 0);
-    setenv("SWISH_DEBUG_PARSER", "0", 0);
-    setenv("SWISH_DEBUG_NAMEDBUFFER", "0", 0);
-    setenv("SWISH_WARNINGS", "1", 0);
+    swish_setenv("SWISH_DEBUG", "0", 0);
+    swish_setenv("SWISH_DEBUG_MEMORY", "0", 0);
+    swish_setenv("SWISH_DEBUG_CONFIG", "0", 0);
+    swish_setenv("SWISH_DEBUG_DOCINFO", "0", 0);
+    swish_setenv("SWISH_DEBUG_IO", "0", 0);
+    swish_setenv("SWISH_DEBUG_TOKENLIST", "0", 0);
+    swish_setenv("SWISH_DEBUG_TOKENIZER", "0", 0);
+    swish_setenv("SWISH_DEBUG_PARSER", "0", 0);
+    swish_setenv("SWISH_DEBUG_NAMEDBUFFER", "0", 0);
+    swish_setenv("SWISH_WARNINGS", "1", 0);
     if (!SWISH_DEBUG) {
 
         SWISH_DEBUG += swish_string_to_int(getenv("SWISH_DEBUG"));
@@ -8536,7 +8803,19 @@ swish_setup(
         }
         if (swish_string_to_int(getenv("SWISH_DEBUG_IO"))) {
             SWISH_DEBUG += SWISH_DEBUG_IO;
-        }   
+        }
+        
+        /* special value to turn on all debugging */
+        if (SWISH_DEBUG == -1) {
+            SWISH_DEBUG += SWISH_DEBUG_MEMORY;
+            SWISH_DEBUG += SWISH_DEBUG_CONFIG;
+            SWISH_DEBUG += SWISH_DEBUG_DOCINFO;
+            SWISH_DEBUG += SWISH_DEBUG_TOKENLIST;
+            SWISH_DEBUG += SWISH_DEBUG_TOKENIZER;
+            SWISH_DEBUG += SWISH_DEBUG_PARSER;
+            SWISH_DEBUG += SWISH_DEBUG_NAMEDBUFFER;
+            SWISH_DEBUG += SWISH_DEBUG_IO;        
+        }
 
         if (SWISH_DEBUG) {
             SWISH_DEBUG_MSG("SWISH_DEBUG set to %d", SWISH_DEBUG);
@@ -8550,7 +8829,8 @@ swish_setup(
      * between the version it was compiled for and the actual shared
      * library used.
 */
-    LIBXML_TEST_VERSION swish_mem_init();
+    LIBXML_TEST_VERSION 
+    swish_mem_init();
     swish_verify_utf8_locale();
 
 }
@@ -8750,15 +9030,11 @@ swish_property_free(
 }
 
 int
-swish_property_get_id(
-    xmlChar *propname, 
-    xmlHashTablePtr properties
+swish_property_get_builtin_id(
+    xmlChar *propname
 )
 {
     int prop_id = -2;
-    swish_Property *prop;
-    
-    // special cases
     if (xmlStrEqual(propname, BAD_CAST SWISH_PROP_RANK)) {
         prop_id = SWISH_PROP_RANK_ID;
     }
@@ -8780,7 +9056,22 @@ swish_property_get_id(
     else if (xmlStrEqual(propname, BAD_CAST SWISH_PROP_NWORDS)) {
         prop_id = SWISH_PROP_NWORDS_ID;
     }
+    return prop_id;
+}
+
+int
+swish_property_get_id(
+    xmlChar *propname, 
+    xmlHashTablePtr properties
+)
+{
+    int prop_id = -2;
+    swish_Property *prop;
     
+    // special cases
+    if (swish_property_get_builtin_id(propname) != -2) {
+        prop_id = swish_property_get_builtin_id(propname);
+    }
     // look up the propname in the config
     else if (swish_hash_exists( properties, propname )) {
         prop = (swish_Property*)swish_hash_fetch( properties, propname );
@@ -8901,6 +9192,7 @@ swish_metaname_free(
 #include <libxml/xmlreader.h>
 #include <libxml/xmlwriter.h>
 #include <libxml/encoding.h>
+#include <libxml/uri.h>
 #include <ctype.h>
 #include "libswish3.h"
 #endif
@@ -8917,6 +9209,7 @@ typedef struct
     boolean isalias;
     boolean ismime;
     const xmlChar *parent_name;
+    xmlChar *conf_file;
     swish_Config *config;
     boolean is_valid;
     unsigned int prop_id;
@@ -9513,9 +9806,33 @@ process_node(
      * that config file immediately instead of storing the value
      * in the hash.
      */
-        if (xmlStrEqual(name, (xmlChar *)SWISH_INCLUDE_FILE)) {
-            swish_header_merge((char*)value, h->config);
-            return;
+        if (xmlStrEqual(name, BAD_CAST SWISH_INCLUDE_FILE)) {
+            if (xmlTextReaderRead(reader) == 1) {
+                if (xmlTextReaderNodeType(reader) == XML_READER_TYPE_TEXT) {
+                    value = xmlTextReaderConstValue(reader);
+                    xmlChar *conf_file = swish_xstrdup(value);
+                    if (conf_file[0] != SWISH_PATH_SEP) {
+                        xmlChar *path, *xuri;
+                        path = swish_fs_get_path(h->conf_file);
+                        if (path == NULL) {
+                            SWISH_CROAK("Unable to resolve config file path %s relative to %s", 
+                                conf_file, h->conf_file);
+                        }
+                        xuri = xmlBuildURI(conf_file, path);
+                        if (xuri == NULL) {
+                            SWISH_CROAK("Unable to build URI for %s and %s", conf_file, path);
+                        }
+                        swish_xfree(conf_file);
+                        conf_file = swish_xstrdup(xuri);
+                        xmlFree(xuri); /* because we did not malloc it */
+                        xmlFree(path); /* because we did not malloc it */
+                    }
+                    swish_header_merge((char*)conf_file, h->config);
+                    swish_xfree(conf_file);
+                    return;
+                }
+            }
+            SWISH_CROAK("Invalid value for %s", name);
         }
         else if (xmlStrEqual(name, (const xmlChar *)SWISH_PROP)) {
             reset_headmaker(h);
@@ -9734,12 +10051,15 @@ read_header(
             xmlReaderForMemory((const char *)filename, xmlStrlen((xmlChar *)filename),
                                "[ swish.xml ]", NULL, 0);
 
+        h->conf_file = swish_xstrdup(BAD_CAST "in-memory");
+        
         if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
             SWISH_DEBUG_MSG("header parsed in-memory");
         }
     }
     else {
         reader = xmlReaderForFile(filename, NULL, 0);
+        h->conf_file = swish_xstrdup(BAD_CAST filename);
 
         if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
             SWISH_DEBUG_MSG("header parsed from file");
@@ -9756,6 +10076,8 @@ read_header(
         if (ret != 0) {
             SWISH_CROAK("%s : failed to parse\n", filename);
         }
+        swish_xfree(h->conf_file);
+        h->conf_file = NULL;
     }
     else {
         SWISH_CROAK("Unable to open %s\n", filename);
@@ -9789,7 +10111,10 @@ test_prop_alias_for(
     xmlChar *name
 )
 {
-    if (prop->alias_for != NULL && !swish_hash_exists(c->properties, prop->alias_for)) {
+    if (prop->alias_for != NULL 
+        && !swish_hash_exists(c->properties, prop->alias_for)
+        && !swish_property_get_id(prop->alias_for, c->properties)
+    ) {
         SWISH_CROAK("Property '%s' has alias_for value of '%s' but no such Property defined",
              name, prop->alias_for);
     }
@@ -9817,6 +10142,7 @@ init_headmaker(
     reset_headmaker(h);
     h->prop_id = SWISH_PROP_THIS_MUST_COME_LAST_ID;
     h->meta_id = SWISH_META_THIS_MUST_COME_LAST_ID;
+    h->conf_file = NULL;
     return h;
 }
 
@@ -9848,6 +10174,9 @@ swish_header_validate(
 
     swish_config_debug(h->config);
     swish_config_free(h->config);
+    if (h->conf_file != NULL) {
+        swish_xfree(h->conf_file);
+    }
     swish_xfree(h);
     return 1;                   /* how to test ? */
 }
@@ -9869,6 +10198,9 @@ swish_header_merge(
         SWISH_DEBUG_MSG("config_merge complete");
     }
     swish_config_free(h->config);
+    if (h->conf_file != NULL) {
+        swish_xfree(h->conf_file);
+    }
     swish_xfree(h);
     if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
         SWISH_DEBUG_MSG("temp head struct freed");
@@ -9890,6 +10222,9 @@ swish_header_read(
     h = init_headmaker();
     read_header(filename, h);
     c = h->config;
+    if (h->conf_file != NULL) {
+        swish_xfree(h->conf_file);
+    }
     swish_xfree(h);
     return c;
 }
@@ -10359,12 +10694,17 @@ is_ignore_word_utf8(
     uint32_t c
 )
 {
-    if (c == '\'')              /*  contractions allowed */
+    if (c == '\'') {              /*  contractions allowed */
         return 0;
+    }
 
-    if (!c || iswspace(c) || iswcntrl(c) || iswpunct(c)
-        )
+    if (c == '_') {               /* consider underscore a wordchar like regex does */
+        return 0;
+    }
+
+    if (!c || iswspace(c) || iswcntrl(c) || iswpunct(c)) {
         return 1;
+    }
 
     return 0;
 }
@@ -10395,12 +10735,15 @@ is_ignore_word_ascii(
     char c
 )
 {
-    if (c == '\'')              /*  contractions allowed */
+    if (c == '\'') {              /*  contractions allowed */
         return 0;
+    }
 
-    return (!c || isspace(c) || iscntrl(c) || ispunct(c)
-        )
-        ? 1 : 0;
+    if (c == '_') {               /* consider underscore a wordchar like regex does */
+        return 0;
+    }
+
+    return (!c || isspace(c) || iscntrl(c) || ispunct(c)) ? 1 : 0;
 }
 
 /************************************************

@@ -75,6 +75,7 @@
 #define SWISH_TOKENIZE              "Tokenize"
 #define SWISH_CASCADE_META_CONTEXT  "CascadeMetaContext"
 #define SWISH_IGNORE_XMLNS          "IgnoreXMLNameSpaces"
+#define SWISH_FOLLOW_XINCLUDE       "FollowXInclude"
 
 /* tags */
 #define SWISH_DEFAULT_METANAME    "swishdefault"
@@ -159,9 +160,11 @@ typedef enum {
 
 #if defined(WIN32) && !defined (__CYGWIN__)
 #define SWISH_PATH_SEP             '\\'
+#define SWISH_PATH_SEP_STR         "\\"
 #define SWISH_EXT_SEP              "\\."
 #else
 #define SWISH_PATH_SEP             '/'
+#define SWISH_PATH_SEP_STR         "/"
 #define SWISH_EXT_SEP              "/."
 #endif
 
@@ -280,6 +283,7 @@ struct swish_ConfigFlags
     boolean         tokenize;
     boolean         cascade_meta_context;
     boolean         ignore_xmlns;
+    boolean         follow_xinclude;
     xmlHashTablePtr meta_ids;
     xmlHashTablePtr prop_ids;
     //xmlHashTablePtr contexts;
@@ -428,6 +432,7 @@ struct swish_ParserData
 void            swish_setup();
 const char *    swish_lib_version();
 const char *    swish_libxml2_version();
+void            swish_setenv(char * name, char * value, int override);
 /*
 =cut
 */
@@ -437,9 +442,9 @@ const char *    swish_libxml2_version();
 */
 swish_3 *       swish_3_init( void (*handler) (swish_ParserData *), void *stash );
 void            swish_3_free( swish_3 *s3 );
-int             swish_parse_file( swish_3 * s3, xmlChar *filename);
-unsigned int    swish_parse_fh( swish_3 * s3, FILE * fh);
-int             swish_parse_buffer( swish_3 * s3, xmlChar * buf);
+int             swish_parse_file( swish_3 * s3, xmlChar *filename );
+unsigned int    swish_parse_fh( swish_3 * s3, FILE * fh );
+int             swish_parse_buffer( swish_3 * s3, xmlChar * buf );
 unsigned int    swish_parse_directory( swish_3 *s3, xmlChar *dir, boolean follow_symlinks );
 /*
 =cut
@@ -468,6 +473,7 @@ boolean     swish_fs_is_link( xmlChar *path );
 off_t       swish_fs_get_file_size( xmlChar *path );
 time_t      swish_fs_get_file_mtime( xmlChar *path );
 xmlChar *   swish_fs_get_file_ext( xmlChar *url );
+xmlChar *   swish_fs_get_path( xmlChar *url );
 boolean     swish_fs_looks_like_gz( xmlChar *file );
 /*
 =cut
@@ -696,6 +702,7 @@ void                swish_nb_add_str(   swish_NamedBuffer * nb,
                                         boolean cleanwsp,
                                         boolean autovivify);
 void                swish_buffer_append( xmlBufferPtr buf, xmlChar * txt, int len );
+void                swish_buffer_concat( swish_NamedBuffer *nb1, swish_NamedBuffer *nb2 );
 xmlChar*            swish_nb_get_value( swish_NamedBuffer* nb, xmlChar* key );
 /*
 =cut
@@ -707,6 +714,7 @@ xmlChar*            swish_nb_get_value( swish_NamedBuffer* nb, xmlChar* key );
 swish_Property *    swish_property_init( xmlChar *propname );
 void                swish_property_free( swish_Property *prop );
 void                swish_property_debug( swish_Property *prop );
+int                 swish_property_get_builtin_id( xmlChar *propname );
 int                 swish_property_get_id( xmlChar *propname, xmlHashTablePtr properties );
 /*
 =cut
