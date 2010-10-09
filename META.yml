@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               SWISH-3
-version:            0.08_05
+version:            0.08_06
 abstract:           Perl interface to libswish3
 author:
     - Peter Karman <perl@peknet.com>

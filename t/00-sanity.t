@@ -1,6 +1,8 @@
 use strict;
 use warnings;
 use Test::More tests => 3;
+use Config;
+use Data::Dump qw( dump );
 
 use_ok('SWISH::3');
 
@@ -21,3 +23,7 @@ sub foo {
 }
 
 foo();
+
+# cpantesters debug for freebsd segfaults
+dump \%Config;
+
