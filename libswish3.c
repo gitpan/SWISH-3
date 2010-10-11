@@ -117,7 +117,7 @@
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.3060"
+#define SWISH_LIB_VERSION           "0.1.3062"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
