@@ -38,8 +38,11 @@ _setup(CLASS)
 /* Perl has its own setenv/putenv, which can break when libswish3 uses native setenv().
  * This magic Perl var seems to fix it, per this thread:
  * http://grokbase.com/post/2004/11/11/suse-s-perl-safe-putenf-diff/IQxdco6nM5eY6zUPwmOkuMRH3vo
+ * Where the compile-time def was used, this var is not available (e.g. Solaris).
  */
+#ifndef PERL_USE_SAFE_PUTENV
         PL_use_safe_putenv = 1;
+#endif /* PERL_USE_SAFE_PUTENV */
 
         swish_setup();
 
@@ -176,7 +179,8 @@ slurp(self, filename, ...)
         }
         RETVAL  = newSV(0);
         //warn("%s re-using SV with strlen %d\n", filename, (int)buflen);
-        sv_usepvn_flags(RETVAL, (char*)buf, buflen, SV_SMAGIC | SV_HAS_TRAILING_NUL);
+        // buflen+1 because the swish_io* function will nul-terminate
+        sv_usepvn_flags(RETVAL, (char*)buf, buflen+1, SV_SMAGIC | SV_HAS_TRAILING_NUL);
         swish_memcount_dec(); // must do manually since Perl will free() it.
 
     OUTPUT:
