@@ -135,7 +135,7 @@ void *alloca (size_t);
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.3071"
+#define SWISH_LIB_VERSION           "0.1.3105"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -179,6 +179,8 @@ void *alloca (size_t);
 #define SWISH_CASCADE_META_CONTEXT  "CascadeMetaContext"
 #define SWISH_IGNORE_XMLNS          "IgnoreXMLNameSpaces"
 #define SWISH_FOLLOW_XINCLUDE       "FollowXInclude"
+#define SWISH_UNDEFINED_METATAGS    "UndefinedMetaTags"
+#define SWISH_UNDEFINED_XML_ATTRIBUTES "UndefinedXMLAttributes"
 
 /* tags */
 #define SWISH_DEFAULT_METANAME    "swishdefault"
@@ -195,6 +197,7 @@ void *alloca (size_t);
 #define SWISH_SWISH_FORMAT        "Native"
 #define SWISH_ESTRAIER_FORMAT     "Estraier"
 #define SWISH_KINOSEARCH_FORMAT   "KinoSearch"
+#define SWISH_LUCY_FORMAT         "Lucy"
 #define SWISH_INDEX_FILEFORMAT    "Native"
 #define SWISH_HEADER_FILE         "swish.xml"
 
@@ -251,6 +254,19 @@ typedef enum {
     SWISH_PROP_ENCODING_ID,
     SWISH_PROP_THIS_MUST_COME_LAST_ID
 } SWISH_PROP_ID;
+
+/* parser settings for undefined tags and attributes */
+typedef enum {
+    SWISH_UNDEF_METAS_INDEX = 0,    /* default */
+    SWISH_UNDEF_METAS_ERROR,
+    SWISH_UNDEF_METAS_IGNORE,
+    SWISH_UNDEF_METAS_AUTO,
+    SWISH_UNDEF_ATTRS_DISABLE,      /* default */
+    SWISH_UNDEF_ATTRS_ERROR,
+    SWISH_UNDEF_ATTRS_IGNORE,
+    SWISH_UNDEF_ATTRS_INDEX,
+    SWISH_UNDEF_ATTRS_AUTO
+} SWISH_UNDEF;
 
 /* xapian (maybe others) need string prefixes for metanames */
 #define SWISH_PREFIX_URL            "U"
@@ -387,6 +403,10 @@ struct swish_ConfigFlags
     boolean         cascade_meta_context;
     boolean         ignore_xmlns;
     boolean         follow_xinclude;
+    int             undef_metas;
+    int             undef_attrs;
+    int             max_meta_id;
+    int             max_prop_id;
     xmlHashTablePtr meta_ids;
     xmlHashTablePtr prop_ids;
     //xmlHashTablePtr contexts;
@@ -512,7 +532,7 @@ struct swish_ParserData
     xmlBufferPtr           prop_buf;           // tmp Property buffer
     xmlChar               *tag;                // current tag name
     swish_DocInfo         *docinfo;            // document-specific properties
-    boolean                no_index;           // toggle flag. should buffer be indexed.
+    boolean                ignore_content;     // toggle flag. should buffer be indexed.
     boolean                is_html;            // shortcut flag for html parser
     boolean                bump_word;          // boolean for moving word position/adding space
     unsigned int           offset;             // current offset position
@@ -703,6 +723,7 @@ xmlChar *           swish_mime_get_type( swish_Config * config, xmlChar * fileex
 xmlChar *           swish_mime_get_parser( swish_Config * config, xmlChar *mime );
 void                swish_config_test_alias_fors( swish_Config *c );
 swish_ConfigFlags * swish_config_flags_init();
+void                swish_config_flags_debug( swish_ConfigFlags *flags );
 void                swish_config_flags_free( swish_ConfigFlags *flags );
 void                swish_config_test_alias_fors( swish_Config *config );
 void                swish_config_test_unique_ids( swish_Config *config );
@@ -789,19 +810,20 @@ void                swish_docinfo_debug( swish_DocInfo * docinfo );
 =head2 Buffer Functions
 */
 swish_NamedBuffer * swish_nb_init( xmlHashTablePtr confhash );
-void                swish_nb_free( swish_NamedBuffer * nb );
-void                swish_nb_debug( swish_NamedBuffer * nb, xmlChar * label );
+void                swish_nb_free( swish_NamedBuffer *nb );
+void                swish_nb_new( swish_NamedBuffer *nb, xmlChar *key );
+void                swish_nb_debug( swish_NamedBuffer *nb, xmlChar *label );
 void                swish_nb_add_buf( swish_NamedBuffer *nb, 
-                                      xmlChar * name,
+                                      xmlChar *name,
                                       xmlBufferPtr buf, 
-                                      xmlChar * joiner,
+                                      xmlChar *joiner,
                                       boolean cleanwsp,
                                       boolean autovivify);
-void                swish_nb_add_str(   swish_NamedBuffer * nb, 
-                                        xmlChar * name, 
-                                        xmlChar * str,
+void                swish_nb_add_str(   swish_NamedBuffer *nb, 
+                                        xmlChar *name, 
+                                        xmlChar *str,
                                         unsigned int len,
-                                        xmlChar * joiner,
+                                        xmlChar *joiner,
                                         boolean cleanwsp,
                                         boolean autovivify);
 void                swish_buffer_append( xmlBufferPtr buf, xmlChar * txt, int len );
@@ -827,6 +849,7 @@ int                 swish_property_get_id( xmlChar *propname, xmlHashTablePtr pr
 =head2 MetaName Functions
 */
 swish_MetaName *    swish_metaname_init( xmlChar *name);
+void                swish_metaname_new( xmlChar *name, swish_Config *config );
 void                swish_metaname_free( swish_MetaName *m );
 void                swish_metaname_debug( swish_MetaName *m );
 /*
@@ -2107,7 +2130,7 @@ free_metas(
 )
 {
     if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
-        SWISH_DEBUG_MSG("   freeing config->meta %s", metaname);
+        SWISH_DEBUG_MSG(" freeing config->meta %s", metaname);
         swish_metaname_debug((swish_MetaName *)meta);
     }
     meta->ref_cnt--;
@@ -2158,6 +2181,10 @@ swish_config_init_flags(
     flags->cascade_meta_context = SWISH_FALSE;  /* add tokens to every metaname in the stack */
     flags->ignore_xmlns = SWISH_TRUE;
     flags->follow_xinclude = SWISH_TRUE;
+    flags->undef_metas = SWISH_UNDEF_METAS_INDEX;
+    flags->undef_attrs = SWISH_UNDEF_ATTRS_DISABLE;
+    flags->max_meta_id = -1;
+    flags->max_prop_id = -1;
     flags->meta_ids = swish_hash_init(8);
     flags->prop_ids = swish_hash_init(8);
     //flags->contexts = swish_hash_init(8); // TODO cache these to save malloc/frees
@@ -2176,12 +2203,24 @@ swish_config_flags_free(
     xmlHashFree(flags->meta_ids, NULL);
     xmlHashFree(flags->prop_ids, NULL);
     if (SWISH_DEBUG) {
-        SWISH_DEBUG_MSG("config->tokenize was %d", flags->tokenize);
-        SWISH_DEBUG_MSG("config->cascade_meta_context was %d", flags->cascade_meta_context);
-        SWISH_DEBUG_MSG("config->ignore_xmlns was %d", flags->ignore_xmlns);
-        SWISH_DEBUG_MSG("config->follow_xinclude was %d", flags->follow_xinclude);
+        swish_config_flags_debug(flags);
     }
     swish_xfree(flags);
+}
+
+void
+swish_config_flags_debug(
+    swish_ConfigFlags *flags
+)
+{
+    SWISH_DEBUG_MSG("config->tokenize == %d", flags->tokenize);
+    SWISH_DEBUG_MSG("config->cascade_meta_context == %d", flags->cascade_meta_context);
+    SWISH_DEBUG_MSG("config->ignore_xmlns == %d", flags->ignore_xmlns);
+    SWISH_DEBUG_MSG("config->follow_xinclude == %d", flags->follow_xinclude);
+    SWISH_DEBUG_MSG("config->undef_metas == %d", flags->undef_metas);
+    SWISH_DEBUG_MSG("config->undef_attrs == %d", flags->undef_attrs);
+    SWISH_DEBUG_MSG("config->max_meta_id == %d", flags->max_meta_id);
+    SWISH_DEBUG_MSG("config->max_prop_id == %d", flags->max_prop_id);
 }
 
 /* init config object */
@@ -2246,9 +2285,11 @@ swish_config_set_default(
     swish_hash_add(config->flags->meta_ids, tmpbuf, tmpmeta);
     swish_hash_add(config->metanames, (xmlChar *)SWISH_DEFAULT_METANAME, tmpmeta);
     swish_xfree(tmpbuf);
-    if (SWISH_DEBUG & SWISH_DEBUG_CONFIG)
+    config->flags->max_meta_id = tmpmeta->id;
+    if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
         SWISH_DEBUG_MSG("swishdefault metaname set");
-
+    }
+    
     // title
     tmpmeta = swish_metaname_init(swish_xstrdup((xmlChar *)SWISH_TITLE_METANAME));
     tmpmeta->ref_cnt++;
@@ -2257,9 +2298,11 @@ swish_config_set_default(
     swish_hash_add(config->flags->meta_ids, tmpbuf, tmpmeta);
     swish_hash_add(config->metanames, (xmlChar *)SWISH_TITLE_METANAME, tmpmeta);
     swish_xfree(tmpbuf);
-    if (SWISH_DEBUG & SWISH_DEBUG_CONFIG)
+    config->flags->max_meta_id = tmpmeta->id;
+    if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
         SWISH_DEBUG_MSG("swishtitle metaname set");
-
+    }
+    
 /* properties */
     // description
     tmpprop = swish_property_init(swish_xstrdup((xmlChar *)SWISH_PROP_DESCRIPTION));
@@ -2270,7 +2313,8 @@ swish_config_set_default(
     tmpbuf = swish_int_to_string(SWISH_PROP_DESCRIPTION_ID);
     swish_hash_add(config->flags->prop_ids, tmpbuf, tmpprop);
     swish_xfree(tmpbuf);
-
+    config->flags->max_prop_id = tmpprop->id;
+    
     // title
     tmpprop = swish_property_init(swish_xstrdup((xmlChar *)SWISH_PROP_TITLE));
     tmpprop->ref_cnt++;
@@ -2279,6 +2323,7 @@ swish_config_set_default(
     tmpbuf = swish_int_to_string(SWISH_PROP_TITLE_ID);
     swish_hash_add(config->flags->prop_ids, tmpbuf, tmpprop);
     swish_xfree(tmpbuf);
+    config->flags->max_prop_id = tmpprop->id;
 
 /* parsers */
     swish_hash_add(config->parsers, (xmlChar *)"text/plain",
@@ -2399,6 +2444,7 @@ swish_config_debug(
     xmlHashScan(config->mimes, (xmlHashScanner)config_printer, "mimes");
     xmlHashScan(config->index, (xmlHashScanner)config_printer, "index");
     xmlHashScan(config->tag_aliases, (xmlHashScanner)config_printer, "tag_aliases");
+    swish_config_flags_debug(config->flags);
 }
 
 static void
@@ -2530,6 +2576,8 @@ swish_config_merge(
 )
 {
 
+    xmlChar *v;
+
 /* values in config2 override and are set in config1 */
 
     if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
@@ -2604,8 +2652,54 @@ swish_config_merge(
             swish_string_to_boolean(swish_hash_fetch(config2->misc, BAD_CAST SWISH_FOLLOW_XINCLUDE));
     }
     config1->flags->follow_xinclude = config2->flags->follow_xinclude;
-
-
+    if (swish_hash_exists(config2->misc, BAD_CAST SWISH_UNDEFINED_METATAGS)) {
+        v = swish_hash_fetch(config2->misc, BAD_CAST SWISH_UNDEFINED_METATAGS);
+        if (xmlStrEqual(v, BAD_CAST "error")) {
+            config2->flags->undef_metas = SWISH_UNDEF_METAS_ERROR;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "ignore")) {
+            config2->flags->undef_metas = SWISH_UNDEF_METAS_IGNORE;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "index")) {
+            config2->flags->undef_metas = SWISH_UNDEF_METAS_INDEX;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "auto")) {
+            config2->flags->undef_metas = SWISH_UNDEF_METAS_AUTO;
+        }
+        else {
+            SWISH_CROAK("Unknown value for %s: %s", SWISH_UNDEFINED_METATAGS, v);
+        }
+    }
+    config1->flags->undef_metas = config2->flags->undef_metas;
+    if (swish_hash_exists(config2->misc, BAD_CAST SWISH_UNDEFINED_XML_ATTRIBUTES)) {
+        v = swish_hash_fetch(config2->misc, BAD_CAST SWISH_UNDEFINED_XML_ATTRIBUTES);
+        if (xmlStrEqual(v, BAD_CAST "error")) {
+            config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_ERROR;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "ignore")) {
+            config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_IGNORE;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "index")) {
+            config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_INDEX;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "auto")) {
+            config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_AUTO;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "disable")) {
+            config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_DISABLE;
+        }
+        else {
+            SWISH_CROAK("Unknown value for %s: %s", SWISH_UNDEFINED_XML_ATTRIBUTES, v);
+        }
+    }
+    config1->flags->undef_attrs = config2->flags->undef_attrs;
+    
+    if (config1->flags->max_meta_id < config2->flags->max_meta_id) {
+        config1->flags->max_meta_id = config2->flags->max_meta_id;
+    }
+    if (config1->flags->max_prop_id < config2->flags->max_prop_id) {
+        config1->flags->max_prop_id = config2->flags->max_prop_id;
+    }
 
 
     if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
@@ -3116,7 +3210,7 @@ swish_hash_add(
     int ret;
     ret = xmlHashAddEntry(hash, key, value);
     if (ret == -1) {
-        SWISH_CROAK("xmlHashAddEntry for %s failed", key);
+        SWISH_CROAK("xmlHashAddEntry for '%s' failed", key);
     }
     /*
     else {
@@ -4617,7 +4711,8 @@ bake_tag(
     xmlChar *xmlns_prefix
 )
 {
-    int i, j, is_html_tag, size;
+    int i, j, size;
+    boolean is_html_tag, prev_bump_word, prev_ignore_content;
     xmlChar *swishtag,
             *tmpstr,
             *xmlns,
@@ -4645,9 +4740,8 @@ bake_tag(
     metaname = NULL;
     metacontent = NULL;
 
-/*
-* normalize all tags 
-*/
+    // normalize all tags 
+
     swishtag = swish_str_tolower(tag);
     
     /* XML namespace support optional */
@@ -4673,64 +4767,66 @@ bake_tag(
 /*
            TODO config features about img tags and a/href tags 
 */
-        if (xmlStrEqual(swishtag, (xmlChar *)"br")
-            || xmlStrEqual(swishtag, (xmlChar *)"img")) {
+        if (xmlStrEqual(swishtag, BAD_CAST "br")
+            || 
+            xmlStrEqual(swishtag, BAD_CAST "img")
+        ) {
             
-            if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+            if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
                 SWISH_DEBUG_MSG("found html tag '%s' ... bump_word = %d", swishtag, SWISH_TRUE);
+            }
             parser_data->bump_word = SWISH_TRUE;
         }
         else {
             const htmlElemDesc *element = htmlTagLookup(swishtag);
 
-            if (!element)
-                is_html_tag = 0;        /* flag that this might be a meta * name */
-
+            if (!element) {
+                is_html_tag = 0;  // TODO unused?      /* flag that this might be a meta name */
+            }
             else if (!element->isinline) {
 
 /*
 * need to bump token position so we don't match across block *
 * elements 
 */
-                if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+                if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
                     SWISH_DEBUG_MSG("found html !inline tag '%s' ... bump_word = %d", swishtag, SWISH_TRUE);
+                }
                 parser_data->bump_word = SWISH_TRUE;
 
             }
             else {
             
-                if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+                if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
                     SWISH_DEBUG_MSG("found html inline tag '%s' ... bump_word = %d", swishtag, SWISH_FALSE);
+                }
                 parser_data->bump_word = SWISH_FALSE;
             
             }
         }
 
 /*
-* is this an HTML <meta> tag? treat 'name' attribute as a tag *
-* and 'content' attribute as the tag content * we assume 'name'
-* and 'content' are always in english. 
+* is this an HTML <meta> tag? treat 'name' attribute as a tag
+* and 'content' attribute as the tag content.
+* we assume 'name' and 'content' are always in english. 
 */
 
-        if (atts != NULL) {
+        if (xmlStrEqual(swishtag, BAD_CAST "meta") && atts != NULL) {
             for (i = 0; (atts[i] != 0); i++) {
 
-                if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+                if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
                     SWISH_DEBUG_MSG("%d HTML attr: %s", i, atts[i]);
+                }
+                
+                if (xmlStrEqual(atts[i], BAD_CAST "name")) {
 
-                if (xmlStrEqual(atts[i], (xmlChar *)"name")) {
-
-/*
-* SWISH_DEBUG_MSG("found name: %s", atts[i+1]); 
-*/
+                    //SWISH_DEBUG_MSG("found name: %s", atts[i+1]); 
                     metaname = (xmlChar *)atts[i + 1];
                 }
 
-                else if (xmlStrEqual(atts[i], (xmlChar *)"content")) {
-
-/*
-* SWISH_DEBUG_MSG("found content: %s", atts[i+1]); 
-*/
+                else if (xmlStrEqual(atts[i],  BAD_CAST "content")) {
+                
+                    // SWISH_DEBUG_MSG("found content: %s", atts[i+1]); 
                     metacontent = (xmlChar *)atts[i + 1];
                 }
 
@@ -4738,24 +4834,56 @@ bake_tag(
         }
 
         if (metaname != NULL) {
+        
+            prev_ignore_content = parser_data->ignore_content;  // remember
+        
+            if (!swish_hash_exists(parser_data->s3->config->metanames, metaname)) {
+            
+                switch(parser_data->s3->config->flags->undef_metas) {
+            
+                    case SWISH_UNDEF_METAS_ERROR:
+                        SWISH_CROAK("HTML <meta> tag with 'name' attribute '%s' is not a defined MetaName and %s == error",
+                            metaname, SWISH_UNDEFINED_METATAGS);
+                        break;
+                    
+                    case SWISH_UNDEF_METAS_IGNORE:
+                        parser_data->ignore_content = SWISH_TRUE;
+                        break;
+                
+                    case SWISH_UNDEF_METAS_AUTO:
+                        swish_metaname_new(metaname, parser_data->s3->config);
+                        swish_nb_new(parser_data->metanames, metaname);
+                        break;
+                
+                    case SWISH_UNDEF_METAS_INDEX:
+                    default:
+                        break;  // nothing to do
+                    
+                }   // end switch
+            
+            }
+        
             if (metacontent != NULL) {
-                if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+                if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
                     SWISH_DEBUG_MSG("found HTML meta: %s => %s", metaname, metacontent);
-
-/*
-* do not match across metas 
-*/
-                if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+                }
+                
+                // do not match across metas 
+                if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
                     SWISH_DEBUG_MSG("found HTML meta tag '%s' ... bump_word = %d", metaname, SWISH_TRUE);
-
+                }
+                
+                prev_bump_word = parser_data->bump_word;    // remember
                 parser_data->bump_word = SWISH_TRUE;
                 open_tag(parser_data, metaname, NULL, xmlns_prefix);
                 buffer_characters(parser_data, metacontent, xmlStrlen(metacontent));
                 close_tag(parser_data, metaname, xmlns_prefix);
+                parser_data->bump_word = prev_bump_word;    // restore
                 
-                if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+                if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
                     SWISH_DEBUG_MSG("close_tag done. swishtag = '%s', parser->tag = '%s'", 
                         swishtag, parser_data->tag);
+                }
                         
                 swish_xfree(parser_data->tag);  // metaname set recursively, so must free
                 swish_xfree(swishtag);          // 'meta'
@@ -4766,6 +4894,8 @@ bake_tag(
             else {
                 SWISH_WARN("No content for meta tag '%s'", metaname);
             }
+            
+            parser_data->ignore_content = prev_ignore_content;  // restore
         }
 
     }
@@ -4775,10 +4905,11 @@ bake_tag(
 */
     else {
 
-        if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
             SWISH_DEBUG_MSG("found xml tag '%s' ... bump_word = %d", swishtag, SWISH_TRUE);
-            
-        parser_data->bump_word = SWISH_TRUE;
+        }
+        
+        parser_data->bump_word = SWISH_TRUE;    // TODO make this configurable
 
 /*
     XML attributes are parsed in 2 ways:
@@ -4796,11 +4927,8 @@ bake_tag(
 
         if (atts != NULL) {
             strlist = NULL;
-            if (swish_hash_exists(parser_data->s3->config->stringlists, 
-                    (xmlChar *)SWISH_CLASS_ATTRIBUTES)
-            ) {
-                strlist = swish_hash_fetch(parser_data->s3->config->stringlists,
-                                 (xmlChar *)SWISH_CLASS_ATTRIBUTES);
+            if (swish_hash_exists(parser_data->s3->config->stringlists, (xmlChar *)SWISH_CLASS_ATTRIBUTES)) {
+                strlist = swish_hash_fetch(parser_data->s3->config->stringlists, (xmlChar *)SWISH_CLASS_ATTRIBUTES);
             }
 
             for (i = 0; (atts[i] != NULL); i += 2) {
@@ -4839,6 +4967,40 @@ bake_tag(
                 metaname_from_attr = swish_xmalloc(size + 1);
                 snprintf((char *)metaname_from_attr, size, "%s%c%s", (char *)swishtag, SWISH_DOT, 
                     (char *)attr_lower);
+                    
+                if (!swish_hash_exists(parser_data->s3->config->metanames, metaname_from_attr)) {
+                    switch(parser_data->s3->config->flags->undef_attrs) {
+                
+                        case SWISH_UNDEF_ATTRS_ERROR:
+                            SWISH_CROAK("XML tag '%s' is not a defined MetaName and %s == error",
+                                metaname_from_attr, SWISH_UNDEFINED_XML_ATTRIBUTES);
+                            break;
+                        
+                        case SWISH_UNDEF_ATTRS_IGNORE:
+                            // TODO in the case of attributes, is this needed?
+                            //parser_data->ignore_content = SWISH_TRUE;
+                            break;
+                    
+                        case SWISH_UNDEF_ATTRS_AUTO:
+                            swish_metaname_new(metaname_from_attr, parser_data->s3->config);
+                            swish_nb_new(parser_data->metanames, metaname_from_attr);
+                            break;
+                    
+                        case SWISH_UNDEF_ATTRS_INDEX:
+                            // TODO what metaname to use?
+                            prev_bump_word = parser_data->bump_word;
+                            parser_data->bump_word = SWISH_TRUE;
+                            buffer_characters(parser_data, attr_val_lower, xmlStrlen(attr_val_lower));
+                            parser_data->bump_word = prev_bump_word;
+                            break;
+                        
+                        case SWISH_UNDEF_ATTRS_DISABLE:
+                        default:
+                            break;  // nothing to do
+                        
+                    }   // end switch
+                }
+                    
                 if (swish_hash_exists(parser_data->s3->config->metanames, metaname_from_attr)) {
                     if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
                         SWISH_DEBUG_MSG("found XML meta tag '%s' with content '%s'", 
@@ -4862,7 +5024,34 @@ bake_tag(
             
             }
         }
-    }
+        
+        if (!swish_hash_exists(parser_data->s3->config->metanames, swishtag)) {
+        
+            switch(parser_data->s3->config->flags->undef_metas) {
+            
+                case SWISH_UNDEF_METAS_ERROR:
+                    SWISH_CROAK("XML tag '%s' is not a defined MetaName and %s == error",
+                        swishtag, SWISH_UNDEFINED_METATAGS);
+                    break;
+                    
+                case SWISH_UNDEF_METAS_IGNORE:
+                    parser_data->ignore_content = SWISH_TRUE;
+                    break;
+                
+                case SWISH_UNDEF_METAS_AUTO:
+                    swish_metaname_new(swishtag, parser_data->s3->config);
+                    swish_nb_new(parser_data->metanames, swishtag);
+                    break;
+                
+                case SWISH_UNDEF_METAS_INDEX:
+                default:
+                    parser_data->ignore_content = SWISH_FALSE;
+                    break;
+                    
+            }   // end switch
+        }
+        
+    }   // end XML tag
 
 /*
 * change our internal name for this tag if it is aliased in config 
@@ -5235,9 +5424,10 @@ open_tag(
     
     parser_data = (swish_ParserData *)data;
     
-    if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+    if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
         SWISH_DEBUG_MSG("<%s>", tag);
-
+    }
+    
     if (parser_data->tag != NULL) {
         if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
             SWISH_DEBUG_MSG("Freeing swishtag (parser_data->tag): '%s'", parser_data->tag);
@@ -5252,9 +5442,10 @@ open_tag(
                 (xmlChar **)atts, 
                 (xmlChar *)xmlns_prefix);
         
-    if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+    if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
         SWISH_DEBUG_MSG("checking config for '%s' in watched tags", parser_data->tag);
-
+    }
+    
 /* all tags on domstack */
 
     if (parser_data->tag == NULL) {
@@ -5271,47 +5462,53 @@ open_tag(
         ||
         swish_hash_exists(parser_data->s3->config->properties, parser_data->domstack->head->context)
     ) {
-        if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
             SWISH_DEBUG_MSG(" %s = new property", parser_data->tag);
-
+        }
+        
         add_stack_to_prop_buf(NULL, parser_data);       /* NULL means all properties in the stack are added */
         xmlBufferEmpty(parser_data->prop_buf);
         
-        if (swish_hash_exists(parser_data->s3->config->properties, parser_data->domstack->head->context))
+        if (swish_hash_exists(parser_data->s3->config->properties, parser_data->domstack->head->context)) {
             baked = parser_data->domstack->head->context;
-        else
+        }
+        else {
             baked = parser_data->tag;
-
+        }
+        
         push_tag_stack(parser_data->propstack, (xmlChar *)tag, baked, SWISH_DOM_CHAR);
 
-        if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
             SWISH_DEBUG_MSG("%s pushed ok unto propstack", baked);
+        }
     }
 
 /*
 * likewise for metastack 
 */
+
     if (swish_hash_exists(parser_data->s3->config->metanames, parser_data->tag)
         ||
         swish_hash_exists(parser_data->s3->config->metanames, parser_data->domstack->head->context)
     ) {
-        if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
             SWISH_DEBUG_MSG(" %s = new metaname", parser_data->tag);
-
+        }
         flush_buffer(parser_data, parser_data->metastack->head->baked,
                      parser_data->metastack->head->context);
                      
-        if (swish_hash_exists(parser_data->s3->config->properties, parser_data->domstack->head->context))
+        if (swish_hash_exists(parser_data->s3->config->properties, parser_data->domstack->head->context)) {
             baked = parser_data->domstack->head->context;
-        else
+        }
+        else {
             baked = parser_data->tag;
-
+        }
         push_tag_stack(parser_data->metastack, (xmlChar *)tag, baked, SWISH_DOM_CHAR);
     }
 
-    if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+    if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
         SWISH_DEBUG_MSG("config check for '%s' done", parser_data->tag);
-
+    }
 }
 
 static void
@@ -5381,6 +5578,14 @@ buffer_characters(
     int len
 )
 {
+
+    if (parser_data->ignore_content) {
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+            SWISH_DEBUG_MSG("skipping %d bytes because ignore_content==TRUE", len);
+        }
+        return;
+    }
+
 
     if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
         SWISH_DEBUG_MSG("appending %d bytes to buffer (bump_word=%d)", 
@@ -5685,7 +5890,7 @@ init_parser_data(
 /*
 * toggle 
 */
-    ptr->no_index = SWISH_FALSE;
+    ptr->ignore_content = SWISH_FALSE;
 
 /*
 * shortcut rather than looking parser up in hash for each tag event 
@@ -7263,6 +7468,16 @@ swish_nb_init(
 }
 
 void
+swish_nb_new(
+    swish_NamedBuffer *nb,
+    xmlChar *key
+)
+{
+    add_name_to_hash(NULL, nb->hash, key);
+    //SWISH_DEBUG_MSG("NamedBuffer->new(%s)", key);
+}
+
+void
 swish_nb_free(
     swish_NamedBuffer * nb
 )
@@ -7527,9 +7742,8 @@ swish_string_to_int(
     long i;
     errno = 0;
     i = strtol(buf, (char **)NULL, 10);
-    /*
-       Check for various possible errors 
-     */
+    
+    // Check for various possible errors 
     if ((errno == ERANGE && (i == LONG_MAX || i == LONG_MIN))
         || (errno != 0 && i == 0)) {
         perror("strtol");
@@ -9150,17 +9364,37 @@ swish_metaname_init(
 }
 
 void
+swish_metaname_new(
+    xmlChar *name,
+    swish_Config *config
+)
+{
+    swish_MetaName *m;
+    xmlChar *id_str;
+    m = swish_metaname_init(swish_xstrdup(name));
+    m->ref_cnt++;
+    config->flags->max_meta_id++;
+    m->id = config->flags->max_meta_id;
+    id_str = swish_int_to_string(m->id);
+    swish_hash_add(config->flags->meta_ids, id_str, m);
+    swish_hash_add(config->metanames, name, m);
+    swish_xfree(id_str);
+    //SWISH_DEBUG_MSG("MetaName->new(%s)", name);
+    //swish_metaname_debug(m);
+}
+
+void
 swish_metaname_debug(
     swish_MetaName *m
 )
 {
-    SWISH_DEBUG_MSG("\n\
+    SWISH_DEBUG_MSG("0x%x\n\
     m->ref_cnt      = %d\n\
     m->id           = %d\n\
     m->name         = %s\n\
     m->bias         = %d\n\
     m->alias_for    = %s\n\
-    ", m->ref_cnt, m->id, m->name, m->bias, m->alias_for);
+    ", (long int)m, m->ref_cnt, m->id, m->name, m->bias, m->alias_for);
 }
 
 void
@@ -9387,6 +9621,8 @@ handle_special_misc_flags(
     headmaker *h
 )
 {
+    xmlChar *v;
+    
     if (swish_hash_exists(h->config->misc, BAD_CAST SWISH_TOKENIZE)) {
         /*
         SWISH_DEBUG_MSG("tokenize in config == %s", 
@@ -9410,6 +9646,45 @@ handle_special_misc_flags(
         */
         h->config->flags->ignore_xmlns = 
             swish_string_to_boolean(swish_hash_fetch(h->config->misc, BAD_CAST SWISH_IGNORE_XMLNS));
+    }
+    if (swish_hash_exists(h->config->misc, BAD_CAST SWISH_UNDEFINED_METATAGS)) {
+        v = swish_hash_fetch(h->config->misc, BAD_CAST SWISH_UNDEFINED_METATAGS);
+        if (xmlStrEqual(v, BAD_CAST "error")) {
+            h->config->flags->undef_metas = SWISH_UNDEF_METAS_ERROR;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "ignore")) {
+            h->config->flags->undef_metas = SWISH_UNDEF_METAS_IGNORE;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "index")) {
+            h->config->flags->undef_metas = SWISH_UNDEF_METAS_INDEX;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "auto")) {
+            h->config->flags->undef_metas = SWISH_UNDEF_METAS_AUTO;
+        }
+        else {
+            SWISH_CROAK("Unknown value for %s: %s", SWISH_UNDEFINED_METATAGS, v);
+        }
+    }
+    if (swish_hash_exists(h->config->misc, BAD_CAST SWISH_UNDEFINED_XML_ATTRIBUTES)) {
+        v = swish_hash_fetch(h->config->misc, BAD_CAST SWISH_UNDEFINED_XML_ATTRIBUTES);
+        if (xmlStrEqual(v, BAD_CAST "error")) {
+            h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_ERROR;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "ignore")) {
+            h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_IGNORE;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "index")) {
+            h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_INDEX;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "auto")) {
+            h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_AUTO;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "disable")) {
+            h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_DISABLE;
+        }
+        else {
+            SWISH_CROAK("Unknown value for %s: %s", SWISH_UNDEFINED_XML_ATTRIBUTES, v);
+        }
     }
 
 }
@@ -9554,6 +9829,7 @@ read_metaname(
 /*  must have an id */
     if (meta->id == -1) {
         meta->id = h->meta_id++;
+        h->config->flags->max_meta_id = h->meta_id;
     }
 
     if (!swish_hash_exists(h->config->metanames, meta->name)) {
@@ -9561,11 +9837,11 @@ read_metaname(
     }
     else {
         SWISH_WARN("MetaName %s is already defined", meta->name);
-/*  TODO could be alias. how to check? */
+        // TODO could be alias. how to check?
     }
 
-/* swish_metaname_debug(meta); */
-
+    // swish_metaname_debug(meta);
+    
     h->parent_name = nodename;
 
 }
@@ -9737,6 +10013,7 @@ read_property(
 
     if (prop->id == -1) {
         prop->id = h->prop_id++;
+        h->config->flags->max_prop_id = h->prop_id;
     }
 
     if (!swish_hash_exists(h->config->properties, prop->name)) {
