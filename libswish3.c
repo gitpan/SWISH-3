@@ -135,7 +135,7 @@ void *alloca (size_t);
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.3132"
+#define SWISH_LIB_VERSION           "0.1.3175"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -6944,7 +6944,7 @@ txt_parser(
 /*
 * we obviously haven't any tags on which to trigger our metanames,
 * so set default
-* TODO get title somehow?
+* TODO use filename as title, like swish-e does
 * TODO check config to determine if we should buffer swish_prop_description etc
 */
 
