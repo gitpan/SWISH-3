@@ -52,4 +52,5 @@ XS/TokenIterator.xs
 XS/xml2Hash.xs
 xs_boiler.h
 xs_helpers.c
-META.yml                                 Module meta-data (added by MakeMaker)
+META.yml                                 Module YAML meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)

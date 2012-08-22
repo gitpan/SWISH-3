@@ -135,7 +135,7 @@ void *alloca (size_t);
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.3175"
+#define SWISH_LIB_VERSION           "0.1.3211"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -6944,13 +6944,12 @@ txt_parser(
 /*
 * we obviously haven't any tags on which to trigger our metanames,
 * so set default
-* TODO use filename as title, like swish-e does
 * TODO check config to determine if we should buffer swish_prop_description etc
 */
 
     push_tag_stack(parser_data->metastack, (xmlChar *)SWISH_DEFAULT_METANAME,
                    (xmlChar *)SWISH_DEFAULT_METANAME, SWISH_DOM_CHAR);
-
+                   
     if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
         SWISH_DEBUG_MSG("%s stack PUSH %s", parser_data->metastack->head->context);
 
@@ -6958,6 +6957,18 @@ txt_parser(
     flush_buffer(parser_data, (xmlChar *)SWISH_DEFAULT_METANAME,
                  (xmlChar *)SWISH_DEFAULT_METANAME);
 
+/* add filename as title */
+    push_tag_stack(parser_data->metastack, (xmlChar *)SWISH_TITLE_METANAME,
+                   (xmlChar *)SWISH_TITLE_METANAME, SWISH_DOM_CHAR);
+                   
+    if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
+        SWISH_DEBUG_MSG("%s stack PUSH %s", parser_data->metastack->head->context);
+
+    buffer_characters(parser_data, parser_data->docinfo->uri, xmlStrlen(parser_data->docinfo->uri));
+    flush_buffer(parser_data, (xmlChar *)SWISH_TITLE_METANAME,
+                 (xmlChar *)SWISH_TITLE_METANAME);
+
+/* clean up */
     if (out != NULL) {
         if (SWISH_DEBUG & SWISH_DEBUG_PARSER)
             SWISH_DEBUG_MSG("tmp text buffer being freed");
