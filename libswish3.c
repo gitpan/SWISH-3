@@ -135,7 +135,7 @@ void *alloca (size_t);
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.3227"
+#define SWISH_LIB_VERSION           "0.1.3237"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -2329,6 +2329,8 @@ swish_config_set_default(
     swish_hash_add(config->parsers, (xmlChar *)"text/plain",
                    swish_xstrdup((xmlChar *)SWISH_PARSER_TXT));
     swish_hash_add(config->parsers, (xmlChar *)"application/xml",
+                   swish_xstrdup((xmlChar *)SWISH_PARSER_XML));
+    swish_hash_add(config->parsers, (xmlChar *)"text/xml",
                    swish_xstrdup((xmlChar *)SWISH_PARSER_XML));
     swish_hash_add(config->parsers, (xmlChar *)"text/html",
                    swish_xstrdup((xmlChar *)SWISH_PARSER_HTML));
@@ -5653,22 +5655,63 @@ mycharacters(
 */
 static void
 mycomments(
-    void *parser_data,
-    const xmlChar *ch
+    void *data,
+    const xmlChar *cmt
 )
 {
-    int len = strlen((char *)(char *)ch);
+    int swishcmd_found = 0;
+    int len = xmlStrlen(cmt);
+    xmlChar *swishcmd;
+    xmlChar *comment_text = swish_str_skip_ws((xmlChar*)cmt);
+    swish_ParserData *parser_data = (swish_ParserData *)data;
 
+/*
+*   Allowed comments to enable/disable indexing a block by either:
+*
+*       <!-- noindex -->
+*       <!-- index -->
+*       <!-- SwishCommand noindex -->
+*       <!-- SwishCommand index -->
+*
+*/    
+
+    swish_str_trim_ws(comment_text);
+    if (! *comment_text) {
+        return;
+    }
+    
+    /* Strip off SwishCommand - might be for future use */
+    if ( ( swishcmd = (xmlChar*)xmlStrcasestr( comment_text, (xmlChar*)"SwishCommand" ) ) 
+        && swishcmd == comment_text 
+    ) {
+        comment_text = swish_str_skip_ws( comment_text + xmlStrlen( (xmlChar*)"SwishCommand" ) );
+        swishcmd_found++;
+    }
+
+    if ( !xmlStrcasecmp( comment_text, (xmlChar*)"noindex" ) ) {
+        parser_data->ignore_content = SWISH_TRUE;
+        return;
+    }
+    else if ( !xmlStrcasecmp( comment_text, (xmlChar*)"index" ) ) {
+        if ( parser_data->ignore_content ) {
+           parser_data->ignore_content = SWISH_FALSE;
+        }
+        return;
+    }
+
+
+    if( swishcmd_found )
+        return;
+
+
+    /* Bump position around comments - hard coded, always done to prevent phrase matching */
+    parser_data->bump_word = SWISH_TRUE;
+
+    return;
 /*
 * TODO: make comments indexing optional 
 */
-
-/*
-* TODO: enable noindex option 
-*/
-    return;
-
-    buffer_characters(parser_data, ch, len);
+    buffer_characters(data, cmt, len);
 }
 
 /* 
