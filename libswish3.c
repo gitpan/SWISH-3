@@ -135,7 +135,7 @@ void *alloca (size_t);
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.3237"
+#define SWISH_LIB_VERSION           "0.1.3241"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -532,7 +532,7 @@ struct swish_ParserData
     xmlBufferPtr           prop_buf;           // tmp Property buffer
     xmlChar               *tag;                // current tag name
     swish_DocInfo         *docinfo;            // document-specific properties
-    boolean                ignore_content;     // toggle flag. should buffer be indexed.
+    unsigned int           ignore_content;     // toggle flag. should buffer be indexed.
     boolean                is_html;            // shortcut flag for html parser
     boolean                bump_word;          // boolean for moving word position/adding space
     unsigned int           offset;             // current offset position
@@ -4713,8 +4713,8 @@ bake_tag(
     xmlChar *xmlns_prefix
 )
 {
-    int i, j, size;
-    boolean is_html_tag, prev_bump_word, prev_ignore_content;
+    int i, j, size, prev_ignore_content;
+    boolean is_html_tag, prev_bump_word; 
     xmlChar *swishtag,
             *swishdomtag,
             *tmpstr,
@@ -4850,7 +4850,11 @@ bake_tag(
                         break;
                     
                     case SWISH_UNDEF_METAS_IGNORE:
-                        parser_data->ignore_content = SWISH_TRUE;
+                        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+                            SWISH_DEBUG_MSG("setting ignore_content=%d", 
+                                (parser_data->ignore_content +1));
+                        }
+                        parser_data->ignore_content++;
                         break;
                 
                     case SWISH_UNDEF_METAS_AUTO:
@@ -4898,6 +4902,9 @@ bake_tag(
                 SWISH_WARN("No content for meta tag '%s'", metaname);
             }
             
+            if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+                SWISH_DEBUG_MSG("setting ignore_content=%d", prev_ignore_content);
+            }
             parser_data->ignore_content = prev_ignore_content;  // restore
         }
 
@@ -4981,7 +4988,7 @@ bake_tag(
                         
                         case SWISH_UNDEF_ATTRS_IGNORE:
                             // TODO in the case of attributes, is this needed?
-                            //parser_data->ignore_content = SWISH_TRUE;
+                            //parser_data->ignore_content++;
                             break;
                     
                         case SWISH_UNDEF_ATTRS_AUTO:
@@ -5038,7 +5045,11 @@ bake_tag(
                     break;
                     
                 case SWISH_UNDEF_METAS_IGNORE:
-                    parser_data->ignore_content = SWISH_TRUE;
+                    if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+                        SWISH_DEBUG_MSG("setting ignore_content=%d", 
+                            (parser_data->ignore_content +1));
+                    }
+                    parser_data->ignore_content++;
                     break;
                 
                 case SWISH_UNDEF_METAS_AUTO:
@@ -5048,7 +5059,13 @@ bake_tag(
                 
                 case SWISH_UNDEF_METAS_INDEX:
                 default:
-                    parser_data->ignore_content = SWISH_FALSE;
+                    if (parser_data->ignore_content) {
+                        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+                            SWISH_DEBUG_MSG("ignore_content was %d, setting ignore_content=0", 
+                                parser_data->ignore_content);
+                        }
+                        parser_data->ignore_content = 0;
+                    }
                     break;
                     
             }   // end switch
@@ -5597,7 +5614,7 @@ buffer_characters(
 
     if (parser_data->ignore_content) {
         if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
-            SWISH_DEBUG_MSG("skipping %d bytes because ignore_content==TRUE", len);
+            SWISH_DEBUG_MSG("skipping %d bytes because ignore_content > 0", len);
         }
         return;
     }
@@ -5689,12 +5706,20 @@ mycomments(
     }
 
     if ( !xmlStrcasecmp( comment_text, (xmlChar*)"noindex" ) ) {
-        parser_data->ignore_content = SWISH_TRUE;
+        if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+            SWISH_DEBUG_MSG("found noindex comment, setting ignore_content=%d", 
+                (parser_data->ignore_content +1));
+        }
+        parser_data->ignore_content++;
         return;
     }
     else if ( !xmlStrcasecmp( comment_text, (xmlChar*)"index" ) ) {
-        if ( parser_data->ignore_content ) {
-           parser_data->ignore_content = SWISH_FALSE;
+        if ( parser_data->ignore_content > 0 ) {
+            if (SWISH_DEBUG & SWISH_DEBUG_PARSER) {
+                SWISH_DEBUG_MSG("found index comment, setting ignore_content=%d", 
+                    (parser_data->ignore_content -1));
+            }
+            parser_data->ignore_content--;
         }
         return;
     }
@@ -5947,7 +5972,7 @@ init_parser_data(
 /*
 * toggle 
 */
-    ptr->ignore_content = SWISH_FALSE;
+    ptr->ignore_content = 0;
 
 /*
 * shortcut rather than looking parser up in hash for each tag event 
