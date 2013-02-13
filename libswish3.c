@@ -135,7 +135,7 @@ void *alloca (size_t);
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "0.1.3241"
+#define SWISH_LIB_VERSION           "0.1.3292"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -261,11 +261,13 @@ typedef enum {
     SWISH_UNDEF_METAS_ERROR,
     SWISH_UNDEF_METAS_IGNORE,
     SWISH_UNDEF_METAS_AUTO,
+    SWISH_UNDEF_METAS_AUTOALL,
     SWISH_UNDEF_ATTRS_DISABLE,      /* default */
     SWISH_UNDEF_ATTRS_ERROR,
     SWISH_UNDEF_ATTRS_IGNORE,
     SWISH_UNDEF_ATTRS_INDEX,
-    SWISH_UNDEF_ATTRS_AUTO
+    SWISH_UNDEF_ATTRS_AUTO,
+    SWISH_UNDEF_ATTRS_AUTOALL
 } SWISH_UNDEF;
 
 /* xapian (maybe others) need string prefixes for metanames */
@@ -837,6 +839,7 @@ xmlChar*            swish_nb_get_value( swish_NamedBuffer* nb, xmlChar* key );
 =head2 Property Functions
 */
 swish_Property *    swish_property_init( xmlChar *propname );
+void                swish_property_new( xmlChar *name, swish_Config *config );
 void                swish_property_free( swish_Property *prop );
 void                swish_property_debug( swish_Property *prop );
 int                 swish_property_get_builtin_id( xmlChar *propname );
@@ -2298,7 +2301,9 @@ swish_config_set_default(
     swish_hash_add(config->flags->meta_ids, tmpbuf, tmpmeta);
     swish_hash_add(config->metanames, (xmlChar *)SWISH_TITLE_METANAME, tmpmeta);
     swish_xfree(tmpbuf);
-    config->flags->max_meta_id = tmpmeta->id;
+    if (tmpmeta->id > config->flags->max_meta_id) {
+        config->flags->max_meta_id = tmpmeta->id;
+    }
     if (SWISH_DEBUG & SWISH_DEBUG_CONFIG) {
         SWISH_DEBUG_MSG("swishtitle metaname set");
     }
@@ -2323,8 +2328,10 @@ swish_config_set_default(
     tmpbuf = swish_int_to_string(SWISH_PROP_TITLE_ID);
     swish_hash_add(config->flags->prop_ids, tmpbuf, tmpprop);
     swish_xfree(tmpbuf);
-    config->flags->max_prop_id = tmpprop->id;
-
+    if (tmpprop->id > config->flags->max_prop_id) {
+        config->flags->max_prop_id = tmpprop->id;
+    }
+    
 /* parsers */
     swish_hash_add(config->parsers, (xmlChar *)"text/plain",
                    swish_xstrdup((xmlChar *)SWISH_PARSER_TXT));
@@ -2668,6 +2675,9 @@ swish_config_merge(
         else if (xmlStrEqual(v, BAD_CAST "auto")) {
             config2->flags->undef_metas = SWISH_UNDEF_METAS_AUTO;
         }
+        else if (xmlStrEqual(v, BAD_CAST "autoall")) {
+            config2->flags->undef_metas = SWISH_UNDEF_METAS_AUTOALL;
+        }
         else {
             SWISH_CROAK("Unknown value for %s: %s", SWISH_UNDEFINED_METATAGS, v);
         }
@@ -2686,6 +2696,9 @@ swish_config_merge(
         }
         else if (xmlStrEqual(v, BAD_CAST "auto")) {
             config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_AUTO;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "autoall")) {
+            config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_AUTOALL;
         }
         else if (xmlStrEqual(v, BAD_CAST "disable")) {
             config2->flags->undef_attrs = SWISH_UNDEF_ATTRS_DISABLE;
@@ -4840,7 +4853,10 @@ bake_tag(
         
             prev_ignore_content = parser_data->ignore_content;  // remember
         
-            if (!swish_hash_exists(parser_data->s3->config->metanames, metaname)) {
+            if (!swish_hash_exists(parser_data->s3->config->metanames, metaname)
+                &&
+                !swish_hash_exists(parser_data->s3->config->tag_aliases, metaname)
+            ) {
             
                 switch(parser_data->s3->config->flags->undef_metas) {
             
@@ -4860,6 +4876,15 @@ bake_tag(
                     case SWISH_UNDEF_METAS_AUTO:
                         swish_metaname_new(metaname, parser_data->s3->config);
                         swish_nb_new(parser_data->metanames, metaname);
+                        break;
+
+                    case SWISH_UNDEF_METAS_AUTOALL:
+                        swish_metaname_new(metaname, parser_data->s3->config);
+                        swish_nb_new(parser_data->metanames, metaname);
+                        if (!swish_hash_exists(parser_data->s3->config->properties, metaname)) {
+                            swish_property_new(metaname, parser_data->s3->config);
+                            swish_nb_new(parser_data->properties, metaname);
+                        }
                         break;
                 
                     case SWISH_UNDEF_METAS_INDEX:
@@ -4995,6 +5020,15 @@ bake_tag(
                             swish_metaname_new(metaname_from_attr, parser_data->s3->config);
                             swish_nb_new(parser_data->metanames, metaname_from_attr);
                             break;
+
+                        case SWISH_UNDEF_ATTRS_AUTOALL:
+                            swish_metaname_new(metaname_from_attr, parser_data->s3->config);
+                            swish_nb_new(parser_data->metanames, metaname_from_attr);
+                            if (!swish_hash_exists(parser_data->s3->config->properties, metaname_from_attr)) {
+                                swish_property_new(metaname_from_attr, parser_data->s3->config);
+                                swish_nb_new(parser_data->properties, metaname_from_attr);
+                            }
+                            break;
                     
                         case SWISH_UNDEF_ATTRS_INDEX:
                             // TODO what metaname to use?
@@ -5035,7 +5069,10 @@ bake_tag(
             }
         }
         
-        if (!swish_hash_exists(parser_data->s3->config->metanames, swishtag)) {
+        if (!swish_hash_exists(parser_data->s3->config->metanames, swishtag)
+            &&
+            !swish_hash_exists(parser_data->s3->config->tag_aliases, swishtag)
+        ) {
         
             switch(parser_data->s3->config->flags->undef_metas) {
             
@@ -5055,6 +5092,15 @@ bake_tag(
                 case SWISH_UNDEF_METAS_AUTO:
                     swish_metaname_new(swishtag, parser_data->s3->config);
                     swish_nb_new(parser_data->metanames, swishtag);
+                    break;
+
+                case SWISH_UNDEF_METAS_AUTOALL:
+                    swish_metaname_new(swishtag, parser_data->s3->config);
+                    swish_nb_new(parser_data->metanames, swishtag);
+                    if (!swish_hash_exists(parser_data->s3->config->properties, swishtag)) {
+                        swish_property_new(swishtag, parser_data->s3->config);
+                        swish_nb_new(parser_data->properties, swishtag);
+                    }    
                     break;
                 
                 case SWISH_UNDEF_METAS_INDEX:
@@ -9317,6 +9363,26 @@ swish_property_init(
 }
 
 void
+swish_property_new(
+    xmlChar *name,
+    swish_Config *config
+)
+{
+    swish_Property *p; 
+    xmlChar *id_str;
+    p = swish_property_init(swish_xstrdup(name));
+    p->ref_cnt++;
+    config->flags->max_prop_id++;
+    p->id = config->flags->max_prop_id;
+    id_str = swish_int_to_string(p->id);
+    swish_hash_add(config->flags->prop_ids, id_str, p); 
+    swish_hash_add(config->properties, name, p); 
+    swish_xfree(id_str);
+    //SWISH_DEBUG_MSG("PropertyName->new(%s)", name);
+    //swish_property_debug(p);
+}
+
+void
 swish_property_debug(
     swish_Property *p
 )
@@ -9754,6 +9820,9 @@ handle_special_misc_flags(
         else if (xmlStrEqual(v, BAD_CAST "auto")) {
             h->config->flags->undef_metas = SWISH_UNDEF_METAS_AUTO;
         }
+        else if (xmlStrEqual(v, BAD_CAST "autoall")) {
+            h->config->flags->undef_metas = SWISH_UNDEF_METAS_AUTOALL;
+        }
         else {
             SWISH_CROAK("Unknown value for %s: %s", SWISH_UNDEFINED_METATAGS, v);
         }
@@ -9771,6 +9840,9 @@ handle_special_misc_flags(
         }
         else if (xmlStrEqual(v, BAD_CAST "auto")) {
             h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_AUTO;
+        }
+        else if (xmlStrEqual(v, BAD_CAST "autoall")) {
+            h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_AUTOALL;
         }
         else if (xmlStrEqual(v, BAD_CAST "disable")) {
             h->config->flags->undef_attrs = SWISH_UNDEF_ATTRS_DISABLE;
