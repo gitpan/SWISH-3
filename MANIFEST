@@ -1,6 +1,7 @@
 3.xs
 Changes
 lib/SWISH/3.pm
+lib/SWISH/3/Headers.pm
 libswish3.c
 libswish3.h
 macros.h
@@ -34,6 +35,7 @@ t/24-error.t
 t/25-get-mime.t
 t/26-get-parsers.t
 t/27-parse_fh.t
+t/28-headers.t
 t/bumper.html
 t/latin1.xml
 t/pod-coverage.t
