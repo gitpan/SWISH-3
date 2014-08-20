@@ -25,4 +25,4 @@ resources:
   bugtracker: http://rt.cpan.org/NoAuth/Bugs.html?Dist=SWISH-3
   homepage: http://dev.swish-e.org/wiki/swish3
   repository: http://svn.swish-e.org/libswish3
-version: '1.000010'
+version: '1.000011'
