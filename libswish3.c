@@ -135,7 +135,7 @@ void *alloca (size_t);
 #include <libxml/xmlstring.h>
 #endif
 
-#define SWISH_LIB_VERSION           "1.0.200a024"
+#define SWISH_LIB_VERSION           "1.0.483c1d5"
 #define SWISH_VERSION               "3.0.0"
 #define SWISH_BUFFER_CHUNK_SIZE     16384
 #define SWISH_TOKEN_LIST_SIZE       1024
@@ -8093,13 +8093,16 @@ swish_get_locale(
 {
     char *locale;
     
-    /* initialize with LC_ALL sets all the relevant env vars */
+    /* initialize locale using environment variables --
+     * see locale(7) and setlocale(3) man pages.
+     */
     setlocale(LC_ALL, "");
+    /* fetch the current locale so we can test it */
     locale = setlocale(LC_ALL, "");
     if (locale == NULL || !strlen(locale)) {
         //SWISH_DEBUG_MSG("locale for LC_ALL was null");
 
-/* use LC_CTYPE specifically: 
+/* check LC_CTYPE specifically: 
  * http://mail.nl.linux.org/linux-utf8/2001-09/msg00030.html 
  */
         locale = setlocale(LC_CTYPE, "");
@@ -8112,6 +8115,10 @@ swish_get_locale(
             }
         }
     }
+    /* Must re-set LC_NUMERIC to portable C
+     * This is due to behavior of Perl > v5.18
+     */
+    setlocale(LC_NUMERIC, "C");
     return locale;
 }
 
